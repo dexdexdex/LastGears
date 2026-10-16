@@ -49,7 +49,7 @@ func _ready() -> void:
 
 
 const RADAR_RANGES := [700.0, 1400.0, 2800.0]   # px; Q / R2 cycles
-const RADAR_PERIOD := 7.2                        # seconds per sweep (slow: info goes stale)
+const RADAR_PERIOD := 21.6                       # seconds per sweep (slow: info goes stale)
 const RADAR_R := 112.0
 var sweep := 0.0
 var blips := {}          # Enemy -> [pos, time seen, is_big]

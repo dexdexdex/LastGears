@@ -88,7 +88,7 @@ frames and role modules stay fixed.
   *known* to the squad while inside someone's cone (shared across the squad) or
   within ~110 px of a hull, so squadmates can be surprised from behind.
 - **Radar (lower left).** Proximity sensor: friendlies and aim lines are live,
-  hostile blips refresh only as the sweep passes and fade between sweeps. Rim
+  hostile blips refresh only as the sweep passes (one revolution every 21.6 s) and fade between sweeps. Rim
   marker points to the destination. Q cycles range.
 - **Formations (E / D-pad).** Follow (default slots), Group up (tight, shorter
   leash, no scavenging), Spread out (wide arc, longer leash), Hold (stay where
