@@ -778,49 +778,118 @@ func _style_orb_tac(col: Color, rim: Color, hot: float, t: float, dot: Texture2D
 	_tac_callout(col, hot, t)
 
 
+# Garbled terminal feed per unit: lines type out, scroll up and fade, like
+# a stream of shell installs seen through a bad uplink. Not meant to be read.
+const TERM_CMDS := ["$ brew install %w", "$ npm i %w@%v", "$ apt-get install -y %w", "$ cargo build --release",
+	"$ make -j%d %w", "$ git pull origin %w", "$ ssh root@10.%d.%d.%d", "$ chmod 755 /opt/%w",
+	"$ systemctl restart %w", "$ pip install %w==%v", "$ dd if=/dev/%w of=/tmp/%h", "$ ./%w --sync",
+	"$ mount /dev/sd%c%d /mnt", "$ tar xzf %w-%v.tgz", "$ curl -sL %h.io | sh", "$ kill -9 %d%d%d"]
+const TERM_OUT := ["==> Pouring %w-%v.bottle", "added %d%d packages in %ds", "Compiling %w v%v", "Unpacking %w (%v)",
+	"[%b] %d%d%%", "0x%h %h %h %h", "Fetching %w... done", "warn deprecated %w@%v", "Setting up %w",
+	"%h  %h  %h", "Resolving deltas: %d%d%%", "ok %w %d.%dms", "seg %h: %w", "FAIL %w (retry %d)",
+	"Linking %w", "sha256:%h%h", "-- %w: %d/%d", "Reading %w lists... %d%%"]
+const TERM_WORDS := ["libgit2", "openssl", "node-gyp", "servo-ctl", "gyro", "ffmpeg", "llvm", "rustc", "kernel",
+	"vxlink", "readline", "zlib", "hydra", "icu4c", "mesh-rt", "esbuild", "nav-core", "pkg-cfg", "sqlite",
+	"actuator", "tls", "ballistx", "radar-d", "glibc", "python@3", "webpack", "lidar"]
+const TERM_GLYPHS := "#%&@*+=-:;/\\|<>[]{}~^01"
+const TERM_MAX := 7
+var _term := []          # visible lines: [text, age]
+var _term_t := 0.0
+var _term_typed := 0.0
+var _term_rng: RandomNumberGenerator
+
+
+func _term_fill(tpl: String) -> String:
+	var rng := _term_rng
+	var out := ""
+	var i := 0
+	while i < tpl.length():
+		var ch := tpl[i]
+		if ch == "%" and i + 1 < tpl.length():
+			var k := tpl[i + 1]
+			i += 2
+			match k:
+				"w": out += TERM_WORDS[rng.randi() % TERM_WORDS.size()]
+				"v": out += "%d.%d.%d" % [rng.randi() % 9, rng.randi() % 30, rng.randi() % 12]
+				"d": out += str(rng.randi() % 10)
+				"h": out += "%04x" % (rng.randi() % 65536)
+				"c": out += "abcd"[rng.randi() % 4]
+				"b":
+					var n := rng.randi() % 11
+					out += "#".repeat(n) + ".".repeat(10 - n)
+				"%": out += "%"
+				_: out += k
+			continue
+		out += ch
+		i += 1
+	# signal noise: a few characters scrambled
+	var chars := out.to_ascii_buffer()
+	for j in chars.size():
+		if rng.randf() < 0.07:
+			chars[j] = TERM_GLYPHS.unicode_at(rng.randi() % TERM_GLYPHS.length())
+	return chars.get_string_from_ascii().substr(0, 30)
+
+
+func _term_tick(delta: float, busy: float) -> void:
+	if _term_rng == null:
+		_term_rng = RandomNumberGenerator.new()
+		_term_rng.seed = hash(callsign)
+	for ln in _term:
+		ln[1] += delta
+	_term_typed += delta * (70.0 + 90.0 * busy)
+	_term_t -= delta * (1.0 + 2.0 * busy)
+	if _term_t > 0.0:
+		return
+	_term_t = _term_rng.randf_range(0.08, 0.55)
+	if _term_rng.randf() < 0.03:
+		_term.clear()   # `clear`
+		return
+	var cmd := _term_rng.randf() < 0.3
+	var tpl: String = (TERM_CMDS if cmd else TERM_OUT)[_term_rng.randi() % (TERM_CMDS if cmd else TERM_OUT).size()]
+	_term.append([_term_fill(tpl), 0.0])
+	_term_typed = 0.0 if cmd else 999.0   # commands type out, output lands at once
+	while _term.size() > TERM_MAX:
+		_term.pop_front()
+
+
 func _tac_callout(col: Color, hot: float, t: float) -> void:
 	var r := radius
 	var idx := G.squad.find(self)
-	# spread the four readouts to different corners so they don't stack
+	# spread the four feeds to different corners so they don't stack
 	var sx := -1.0 if idx == 1 or idx == 3 else 1.0
 	var sy := 1.0 if idx >= 2 else -1.0
 	var d := Vector2(sx, sy)
 	var p0 := d * r * 1.3
-	var p1 := p0 + d * 10.0
-	var p2 := p1 + Vector2(sx * 8.0, 0)
-	var lc := Color(col, 0.6)
+	var p1 := p0 + d * 9.0
+	var p2 := p1 + Vector2(sx * 6.0, 0)
+	var lc := Color(col, 0.5)
 	draw_polyline(PackedVector2Array([p0, p1, p2]), lc, 1.0)
+	var busy := 0.0
+	if alive:
+		busy = clampf(muzzle_flash * 2.0 + hot, 0.0, 1.0)
+		_term_tick(get_process_delta_time(), busy)
 	var font := mono_font()
-	var fs := 6
-	var lh := 7.0
-	var txt := col.lightened(0.55)
-	var lines := []   # [text, colour]
-	lines.append(["%s//U-%02d%s" % [callsign, idx + 1, " CMD" if is_player else ""], Color(txt, 0.95)])
+	var fs := 3
+	var lh := 3.6
+	var w := 46.0
+	var h := lh * TERM_MAX + 2.0
+	var x0 := p2.x + (1.5 if sx > 0 else -w - 1.5)
+	var y0 := p2.y - (h if sy < 0 else 0.0) + (2.0 if sy < 0 else -2.0)
+	var bx := x0 - 1.0 if sx > 0 else x0 + w + 1.0
+	draw_line(Vector2(bx, y0), Vector2(bx, y0 + h), lc, 1.0)
+	var txt := col.lightened(0.5)
 	if not alive:
-		lines.append(["SIGNAL LOST", Color(1, 0.35, 0.3)])
-	else:
-		var hr := hp_ratio()
-		lines.append(["HUL %3d  HT %3d%s" % [roundi(hr * 100), roundi(heat), ("  SH %d" % roundi(shield)) if max_shield > 0.0 else ""],
-			Color(1, 0.4, 0.3) if hr < 0.35 else (Color(1.0, 0.65, 0.3) if hot > 0.3 else Color(txt, 0.8))])
-		var wl := ""
-		for slot in ["primary", "secondary"]:
-			var ws: WeaponState = weapons[slot]
-			if ws:
-				var nm: String = String(ws.data.get("short", ws.id)).substr(0, 4)
-				wl += "%s:%s " % [nm, ("RLD" if ws.reload_t > 0.0 else str(ws.ammo))]
-		lines.append([wl.strip_edges(), Color(txt, 0.7)])
-		var cur := "_" if int(t * 2.5) % 2 == 0 else " "
-		lines.append(["> " + state_label.to_lower() + cur, Color(col.lightened(0.3), 0.9)])
-	var w := 0.0
-	for ln in lines:
-		w = maxf(w, font.get_string_size(ln[0], HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
-	var h := lh * lines.size() + 3.0
-	var x0 := p2.x + (2.0 if sx > 0 else -w - 6.0)
-	var y0 := p2.y - (h if sy < 0 else 0.0) + (3.0 if sy < 0 else -3.0)
-	draw_rect(Rect2(x0, y0, w + 4.0, h), Color(0.0, 0.03, 0.02, 0.55))
-	draw_line(Vector2(x0 if sx > 0 else x0 + w + 4.0, y0), Vector2(x0 if sx > 0 else x0 + w + 4.0, y0 + h), lc, 1.0)
-	for i in lines.size():
-		draw_string(font, Vector2(x0 + 2.0, y0 + 1.5 + lh * (i + 1) - 1.5), lines[i][0], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, lines[i][1])
+		txt = Color(1, 0.35, 0.3)
+	# newest line sits at the bottom; older ones scroll up and fade
+	var n := _term.size()
+	for i in n:
+		var ln: Array = _term[i]
+		var s: String = ln[0]
+		var a := clampf(1.0 - float(ln[1]) / 3.5, 0.15, 1.0) * (0.95 if i == n - 1 else 0.6)
+		if i == n - 1 and _term_typed < s.length():
+			s = s.substr(0, int(_term_typed)) + ("_" if int(t * 8.0) % 2 == 0 else "")
+		var row := TERM_MAX - n + i
+		draw_string(font, Vector2(x0, y0 + 1.0 + lh * (row + 1)), s, HORIZONTAL_ALIGNMENT_LEFT, w, fs, Color(txt, a))
 
 func _draw_rot_rect(center: Vector2, dir: Vector2, half: Vector2, col: Color) -> void:
 	var s := dir.orthogonal()
