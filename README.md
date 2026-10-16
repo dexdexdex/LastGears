@@ -46,7 +46,7 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
 | FPS meter: per-system profiler breakdown | F1 | |
 | Render resolution: fast (1600×900 scaled up) / sharp (native, e.g. Retina) | F9 | |
-| Mech look: HULL / GLYPH / MONOLITH / ORB / orb variants HALO, IRIS, SATELLITE, ECLIPSE (remembered) | F6 | |
+| Mech look: HULL / GLYPH / MONOLITH / ORB / orb variants TWIN, GUARD, COMET, LANTERN (remembered) | F6 | |
 | Toggle director readout | F3 | |
 | Toggle satellite grain/tint (darkness stays) | F2 | |
 | Restart | F5 | |

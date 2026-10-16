@@ -442,10 +442,10 @@ func _draw_body() -> void:
 		1: _style_glyph(col, rim, hot, t, dot)
 		2: _style_monolith(col, rim, hot, t, dot)
 		3: _style_orb(col, rim, hot, t, dot)
-		4: _style_orb_halo(col, rim, hot, t, dot)
-		5: _style_orb_iris(col, rim, hot, t, dot)
-		6: _style_orb_satellite(col, rim, hot, t, dot)
-		7: _style_orb_eclipse(col, rim, hot, t, dot)
+		4: _style_orb_twin(col, rim, hot, t, dot)
+		5: _style_orb_guard(col, rim, hot, t, dot)
+		6: _style_orb_comet(col, rim, hot, t, dot)
+		7: _style_orb_lantern(col, rim, hot, t, dot)
 		_: _style_hull(col, rim, hot, t, dot)
 	if muzzle_flash > 0.0:
 		draw_circle(aim_dir * (r + 11.0), 5.0 * muzzle_flash, Color(1, 0.92, 0.65, muzzle_flash))
@@ -498,7 +498,7 @@ func _draw_body() -> void:
 # ---------------------------------------------------------------- styles
 # G.mech_style picks the look (F6 cycles in game): 0 Hull, 1 Glyph,
 # 2 Monolith, 3 Orb, 4-7 orb variations. style_override (>= 0) forces one (gallery).
-const STYLE_NAMES := ["HULL", "GLYPH", "MONOLITH", "ORB", "ORB: HALO", "ORB: IRIS", "ORB: SATELLITE", "ORB: ECLIPSE"]
+const STYLE_NAMES := ["HULL", "GLYPH", "MONOLITH", "ORB", "ORB: TWIN", "ORB: GUARD", "ORB: COMET", "ORB: LANTERN"]
 var style_override := -1
 
 
@@ -706,8 +706,6 @@ func _style_orb(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) ->
 
 
 # ---- orb family (variations on ORB) ----------------------------------------
-const ORB_RINGS := {"vanguard": 2, "bulwark": 3, "kestrel": 2, "sparrow": 2}
-const ORB_PETALS := {"vanguard": 6, "bulwark": 8, "kestrel": 5, "sparrow": 6}
 
 
 func _orb_hover(t: float) -> float:
@@ -735,139 +733,113 @@ func _eye_col(col: Color, hot: float) -> Color:
 	return col.lightened(0.65).lerp(Color(1.0, 0.55, 0.2), hot)
 
 
-func _style_orb_halo(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## Gyroscope: a small core inside tilted rings that keep spinning; the
-	## near half of each ring is bright, the far half dim, so it reads as 3D.
-	var r := radius
-	_orb_shadow(r, dot)
-	var c := Vector2(0, -_orb_hover(t))
-	var nring: int = ORB_RINGS.get(loadout.chassis_id, 2)
-	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
-	var spin := t * (0.6 + 0.25 * float(nring)) + walk_phase * 0.1
-	var rings := []
-	for k in nring:
-		var tilt := facing.angle() + PI * k / nring + spin * (1.0 if k % 2 == 0 else -0.7)
-		var sq := 0.32 + 0.22 * absf(sin(spin * 0.8 + k * 1.7))
-		rings.append([tilt, sq])
-	# far halves behind the core
-	for rg in rings:
-		draw_set_transform(c, rg[0], Vector2(1.0, rg[1]))
-		draw_arc(Vector2.ZERO, r * 1.1, PI, TAU, 14, Color(pc, 0.25), 1.2, true)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	_orb_ball(c, r * 0.66, col, dot, 0.7)
+func _orb_plates() -> int:
+	return 3 if loadout.chassis_id in ["bulwark", "vanguard"] else 2
+
+
+func _orb_core(c: Vector2, r: float, col: Color, hot: float, dot: Texture2D, eye_scale := 1.0) -> Color:
+	## The ORB body: shaded sphere + glowing eye toward the aim + barrel line.
+	_orb_ball(c, r * 0.82, col, dot)
 	var ec := _eye_col(col, hot)
-	_orb_eye(c + aim_dir * r * 0.28, r * 0.13, ec, dot)
-	# near halves in front, each with a bead riding it
-	for rg in rings:
-		draw_set_transform(c, rg[0], Vector2(1.0, rg[1]))
-		draw_arc(Vector2.ZERO, r * 1.1, 0.0, PI, 14, Color(pc, 0.95), 2.2, true)
-		var ba := fposmod(t * 1.7 + rg[0], PI)
-		var bp := Vector2.from_angle(ba) * r * 1.1
-		draw_texture_rect(dot, Rect2(bp - Vector2(2.2, 2.2), Vector2(4.4, 4.4)), false, ec)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var ep := c + aim_dir * r * 0.42
+	_orb_eye(ep, r * 0.17 * eye_scale, ec, dot)
 	var kick := muzzle_flash * 3.0
-	draw_line(c + aim_dir * r * 0.45, c + aim_dir * (r + 10.0 - kick), Color(ec, 0.85), 1.6, true)
+	draw_line(ep + aim_dir * r * 0.17, c + aim_dir * (r + 9.0 - kick), Color(ec, 0.8), 1.6, true)
+	return ec
 
 
-func _style_orb_iris(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## Armoured shell of curved petals around a dark interior; the petals
-	## part toward the aim like an aperture, wider while firing.
+func _style_orb_twin(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
+	## ORB with two armour shells turning against each other: heavy short
+	## plates close in, long thin blades further out.
 	var r := radius
 	_orb_shadow(r, dot)
 	var c := Vector2(0, -_orb_hover(t))
-	draw_texture_rect(dot, Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0), false, Color(0.02, 0.02, 0.025, 0.95))
-	var ec := _eye_col(col, hot)
-	_orb_eye(c + aim_dir * r * 0.2, r * 0.2, ec, dot)
-	var n: int = ORB_PETALS.get(loadout.chassis_id, 6)
-	var aa := aim_dir.angle()
-	var open := 0.45 + muzzle_flash * 0.35 + hot * 0.25
-	var light := Vector2(-0.6, -0.8).normalized()
-	var dark := col.darkened(0.6)
-	var lit := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.5)
-	var step := TAU / n
+	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
+	var n := _orb_plates()
+	var spin := facing.angle() + walk_phase * 0.15
+	_orb_core(c, r, col, hot, dot)
 	for k in n:
-		var mid := aa + step * (k + 0.5)
-		var rel := absf(wrapf(mid - aa, -PI, PI))   # 0 = facing aim
-		var push := maxf(0.0, 1.0 - rel / 1.4) * open
-		var half := step * 0.5 - 0.09 - push * 0.35
-		if half <= 0.04:
-			continue
-		var off := Vector2.from_angle(mid) * push * r * 0.25
-		var shade := clampf(0.5 + 0.5 * Vector2.from_angle(mid).dot(light), 0.0, 1.0)
-		draw_arc(c + off, r * 0.78, mid - half, mid + half, 8, dark.lerp(lit, shade), r * 0.42, false)
-		draw_arc(c + off, r * 0.99, mid - half, mid + half, 8, Color(lit.lightened(0.3), 0.35 + 0.4 * shade), 1.0, true)
-	var kick := muzzle_flash * 3.0
-	draw_line(c + aim_dir * r * 0.4, c + aim_dir * (r + 9.0 - kick), Color(ec, 0.85), 1.8, true)
+		var a := spin + TAU * k / n
+		draw_arc(c, r * 1.02, a - 0.4, a + 0.4, 8, pc, 3.4, true)
+	for k in n + 1:
+		var a2 := -spin * 0.7 + t * 0.5 + TAU * k / (n + 1)
+		draw_arc(c, r * 1.32, a2 - 0.7, a2 + 0.7, 12, Color(pc, 0.75), 1.2, true)
+	draw_arc(c, r * 1.17, 0, TAU, 32, Color(pc, 0.12), 1.0, true)
 
 
-func _style_orb_satellite(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## Core sphere with its weapons as separate pods flying in formation on
-	## either side of the aim, plus a tiny drone orbiting per fitted module.
+func _style_orb_guard(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
+	## ORB whose plates gather in front of the eye like a raised guard,
+	## splitting to let shots through, drifting apart again when idle.
 	var r := radius
 	_orb_shadow(r, dot)
 	var c := Vector2(0, -_orb_hover(t))
 	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
-	var ec := _eye_col(col, hot)
-	var kick := muzzle_flash * 3.0
-	var pods := []
-	if weapons["primary"] != null:
-		pods.append([0.62, r * 0.36, 2.0])
-	if weapons["secondary"] != null:
-		pods.append([-0.62, r * 0.28, 1.4])
-	var tethers := PackedVector2Array()
-	var pod_pos := []
-	for p in pods:
-		var bob := sin(t * 3.0 + p[0] * 4.0) * 1.0
-		var pp: Vector2 = c + aim_dir.rotated(p[0]) * (r * 1.05 + bob)
-		pod_pos.append(pp)
-		tethers.append_array([c + aim_dir.rotated(p[0]) * r * 0.62, pp])
-	draw_multiline(tethers, Color(pc, 0.35), 1.0)
-	_orb_ball(c, r * 0.68, col, dot)
-	_orb_eye(c + aim_dir * r * 0.34, r * 0.14, ec, dot)
-	for i in pods.size():
-		var pp: Vector2 = pod_pos[i]
-		var pr: float = pods[i][1]
-		_orb_ball(pp, pr, col.lightened(0.1), dot, 0.7)
-		draw_line(pp + aim_dir * pr * 0.6, pp + aim_dir * (pr + 7.0 - kick), Color(ec, 0.8), pods[i][2], true)
-	var nmods := 0
-	for m in loadout.modules:
-		if m != "":
-			nmods += 1
-	for k in nmods:
-		var a := t * (1.2 + 0.3 * k) + TAU * k / maxf(1.0, nmods)
-		var dp := c + Vector2.from_angle(a) * Vector2(r * 1.25, r * 0.85)
-		draw_texture_rect(dot, Rect2(dp - Vector2(1.8, 1.8), Vector2(3.6, 3.6)), false, Color(pc, 0.9))
-	draw_arc(c, r * 0.72, 0, TAU, 28, Color(pc, 0.5), 1.0, true)
+	var n := _orb_plates() + 1
+	var aa := aim_dir.angle()
+	var gap := 0.32 + muzzle_flash * 0.25
+	var spread := 0.95 + 0.15 * sin(t * 1.3)
+	draw_arc(c, r * 1.1, 0, TAU, 32, Color(pc, 0.15), 1.0, true)
+	_orb_core(c, r, col, hot, dot)
+	for k in n:
+		var side := -1.0 if k % 2 == 0 else 1.0
+		var idx := float(k / 2)
+		var a := aa + side * (gap + 0.42 + idx * spread * 0.85)
+		var len := 0.36 - idx * 0.06
+		draw_arc(c, r * 1.1, a - len, a + len, 8, Color(pc, 1.0 - idx * 0.25), 3.0, true)
 
 
-func _style_orb_eclipse(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## Black sphere back-lit by its own corona: a bright crescent on the aim
-	## side, a faint halo that breathes faster as heat builds.
+func _style_orb_comet(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
+	## ORB whose plates leave fading trails as they orbit; the orbit speeds
+	## up with movement and heat, so a running mech visibly whirls.
 	var r := radius
 	_orb_shadow(r, dot)
 	var c := Vector2(0, -_orb_hover(t))
-	var pc := col.lerp(Color(1.0, 0.45, 0.15), hot * 0.8)
-	var breathe := 0.5 + 0.5 * sin(t * (1.5 + hot * 8.0))
-	var cr := r * (1.55 + 0.1 * breathe)
-	draw_texture_rect(dot, Rect2(c - Vector2(cr, cr), Vector2(cr, cr) * 2.0), false, Color(pc, 0.16 + 0.08 * breathe))
-	draw_circle(c, r * 0.92, pc.lightened(0.35))
-	var mc := c - aim_dir * r * (0.24 + muzzle_flash * 0.1)
-	var mr := r * 0.84
-	draw_circle(mc, mr, Color(0.03, 0.03, 0.04))
-	# equator ticks rotating with facing, one per leg-equivalent
-	var nl: int = LEGS.get(loadout.chassis_id, 2) * 2
-	var ticks := PackedVector2Array()
-	for k in nl:
-		var a := facing.angle() + walk_phase * 0.12 + TAU * k / nl
-		var u := Vector2.from_angle(a)
-		ticks.append_array([mc + u * mr * 0.55, mc + u * mr * 0.8])
-	draw_multiline(ticks, Color(pc, 0.3), 1.0)
-	var ec := _eye_col(col, hot)
-	var ep := c + aim_dir * r * 0.78
-	_orb_eye(ep, r * 0.1, ec, dot)
-	var kick := muzzle_flash * 3.0
-	draw_line(ep, c + aim_dir * (r + 10.0 - kick), Color(ec, 0.9), 1.4, true)
+	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
+	var n := _orb_plates()
+	var speed := 0.6 + vel.length() * 0.025 + hot * 2.5
+	var spin := t * speed + facing.angle() * 0.5
+	_orb_core(c, r, col, hot, dot)
+	for k in n:
+		var a := spin + TAU * k / n
+		for j in 4:
+			var tail := a - 0.35 - j * 0.28
+			draw_arc(c, r * 1.08, tail - 0.14, tail + 0.14, 4, Color(pc, 0.42 - j * 0.1), 3.0 - j * 0.6, true)
+		draw_arc(c, r * 1.08, a - 0.32, a + 0.32, 8, pc, 3.2, true)
+		var tip := c + Vector2.from_angle(a + 0.32) * r * 1.08
+		draw_texture_rect(dot, Rect2(tip - Vector2(2, 2), Vector2(4, 4)), false, pc.lightened(0.5))
 
+
+func _style_orb_lantern(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
+	## ORB with running lights: each plate carries lamps that chase round
+	## in sequence, and a lit equator band rolls across the sphere.
+	var r := radius
+	_orb_shadow(r, dot)
+	var c := Vector2(0, -_orb_hover(t))
+	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
+	var n := _orb_plates()
+	var spin := facing.angle() + walk_phase * 0.15
+	_orb_ball(c, r * 0.82, col, dot)
+	# equator band: a squashed arc rolling with the walk
+	var roll := sin(walk_phase * 0.5) * 0.45
+	draw_set_transform(c, facing.angle() + PI * 0.5, Vector2(1.0, 0.35 + roll * 0.4))
+	draw_arc(Vector2.ZERO, r * 0.8, 0.15, PI - 0.15, 12, Color(col.lightened(0.4), 0.55), 1.2, true)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var ec := _eye_col(col, hot)
+	var ep := c + aim_dir * r * 0.42
+	_orb_eye(ep, r * 0.17, ec, dot)
+	var kick := muzzle_flash * 3.0
+	draw_line(ep + aim_dir * r * 0.17, c + aim_dir * (r + 9.0 - kick), Color(ec, 0.8), 1.6, true)
+	var lamps := 3
+	for k in n:
+		var a := spin + TAU * k / n
+		draw_arc(c, r * 1.08, a - 0.55, a + 0.55, 10, col.darkened(0.25), 3.0, true)
+		for j in lamps:
+			var la := a - 0.42 + 0.84 * j / (lamps - 1)
+			var on := fposmod(t * 4.0 - j - k * 1.5, float(lamps + 1)) < 1.0
+			var lp := c + Vector2.from_angle(la) * r * 1.08
+			var s := 2.6 if on else 1.4
+			draw_texture_rect(dot, Rect2(lp - Vector2(s, s), Vector2(s, s) * 2.0), false, ec if on else Color(pc, 0.6))
+	draw_arc(c, r * 1.08, 0, TAU, 32, Color(pc, 0.18), 1.0, true)
 
 func _draw_rot_rect(center: Vector2, dir: Vector2, half: Vector2, col: Color) -> void:
 	var s := dir.orthogonal()
