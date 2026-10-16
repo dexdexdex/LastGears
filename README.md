@@ -37,7 +37,9 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Aim | Mouse (crosshair; distance = mortar range) | Right stick |
 | Weapon 1 (primary hardpoint) | Left click | R1 |
 | Weapon 2 (secondary hardpoint) | Right click | L1 |
-| Tactical view + corridor map | Q (toggle) | Hold R2 |
+| Dodge roll (brief invulnerability, 2 s cooldown, +heat) | Space / Shift | Circle |
+| Tactical view + corridor map | Q | Hold R2 |
+| Region map (havens, zones, threat) | Q again, or M | Touchpad |
 | Pause | Enter | Select/Share |
 | Field refit menu (real time!) | Esc | Start |
 | Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
@@ -47,7 +49,15 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 
 ## The vertical slice
 
-Get from **Outpost Gravel** (west) to **Haven-7** (east) along the old freight road.
+Get from **Outpost Gravel** (west) to **Haven-7** (east) through a dead city of
+ruined blocks and rubble plazas. Every run rolls fresh weapons for every mech
+(within each frame's weight limit); frames and role modules stay fixed.
+
+- **Region map (Q twice).** A persistent network of havens, outposts, machine
+  hives and ruins linked by named zones with threat ratings. The current leg and
+  your squad's live position are highlighted; hover a node for details. It's
+  generated from a fixed seed (`atlas.gd`) so the region is the same every run,
+  ready for multi-leg journeys.
 
 - **Squad of four.** You pilot VANGUARD. ROOK (brawler, Bulwark heavy frame), WREN
   (marksman, Kestrel light frame) and MAGS (medic, Sparrow support frame) run on a
@@ -94,6 +104,7 @@ scripts/
   enemy_manager.gd      enemy types + swarm sim (spatial buckets) + drawing
   projectile_manager.gd bullets, rockets, mortar shells, explosions, fx
   director.gd           L4D-style pacing
+  atlas.gd              region network (havens, hives, zones) for the region map
   field_menu.gd         real-time refit UI
   hud.gd                HUD, tactical corridor map, end screen
   tactical_overlay.gd   world-space markers in tactical view

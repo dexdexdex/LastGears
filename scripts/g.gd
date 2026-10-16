@@ -20,7 +20,10 @@ var game_time := 0.0
 var kills := 0
 var using_mouse := false
 var tactical := false
-var tactical_latched := false   # Q toggle
+var view_mode := 0              # Q cycles: 0 field, 1 tactical, 2 overworld
+var overworld := false
+var atlas: Atlas                # regional network of havens and zones (persists across restarts)
+var menu_closed_t := -99.0
 var game_state := "play"       # play | won | lost
 var bot_mode := false          # --bot : AI drives the player (for automated tests)
 var show_director := true
@@ -49,7 +52,9 @@ func reset() -> void:
 	game_time = 0.0
 	kills = 0
 	tactical = false
-	tactical_latched = false
+	view_mode = 0
+	overworld = false
+	menu_closed_t = -99.0
 	game_state = "play"
 
 
@@ -151,7 +156,11 @@ func _setup_input() -> void:
 	_button("fire_secondary", [JOY_BUTTON_LEFT_SHOULDER])    # L1
 	_mouse("fire_secondary", MOUSE_BUTTON_RIGHT)
 	_axis("tactical", JOY_AXIS_TRIGGER_RIGHT, 1.0)           # R2
-	_key("tactical_toggle", [KEY_Q])                         # Q toggles
+	_key("tactical_toggle", [KEY_Q])                         # Q cycles field/tactical/overworld
+	_key("overworld_toggle", [KEY_M])
+	_button("overworld_toggle", [JOY_BUTTON_TOUCHPAD])
+	_key("dodge", [KEY_SPACE, KEY_SHIFT])
+	_button("dodge", [JOY_BUTTON_B])                         # Circle
 	_key("pause", [KEY_ENTER, KEY_KP_ENTER])
 	_button("pause", [JOY_BUTTON_BACK])
 	_key("toggle_fullscreen", [KEY_F11])

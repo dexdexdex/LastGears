@@ -21,7 +21,6 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	var a := alpha
 	# route
-	draw_polyline(G.world.road, Color(1, 0.85, 0.4, 0.25 * a), 3.0 * k)
 	draw_rect(G.world.goal_zone, Color(1, 0.85, 0.4, 0.6 * a), false, 2.0 * k)
 	draw_string(font, G.world.goal_zone.position + Vector2(0, -8 * k), "HAVEN-7", HORIZONTAL_ALIGNMENT_LEFT, -1, int(14 * k), Color(1, 0.85, 0.4, a))
 	# caches

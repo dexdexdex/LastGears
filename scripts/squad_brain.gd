@@ -129,6 +129,7 @@ func _decide() -> void:
 	if not threats.is_empty():
 		threat_center /= threats.size()
 	target = _pick_target()
+	_maybe_dodge()
 
 	var self_pressure := 0
 	for e in threats:
@@ -141,7 +142,7 @@ func _decide() -> void:
 	if key != "lead":
 		scores["follow"] = 0.25 + p.loyalty * 0.3 + clampf((dp - 170.0) / 300.0, 0.0, 1.0) * 0.9
 	else:
-		scores["follow"] = 0.45      # lead "follows" the road east
+		scores["follow"] = 0.45      # lead heads east to the haven
 
 	if target != null:
 		scores["engage"] = 0.55 + p.aggression * 0.35 + minf(threats.size(), 10) * 0.02
@@ -170,7 +171,7 @@ func _decide() -> void:
 	var calm := threats.filter(func(e): return e.pos.distance_to(pos) < 380.0).is_empty()
 	if calm:
 		cache = G.pickups.nearest(pos, 260.0 + p.greed * 220.0)
-		if cache != null and (key == "lead" or cache.pos.distance_to(player.position) < 520.0):
+		if cache != null and ((key == "lead" and G.world.progress_of(mech.position) < 0.9) or (key != "lead" and cache.pos.distance_to(player.position) < 520.0)):
 			scores["scavenge"] = 0.3 + p.greed * 0.55
 
 	if p.medic:
@@ -196,6 +197,39 @@ func _decide() -> void:
 		state = best
 		state_time = 0.0
 		path_goal = Vector2.INF
+
+
+func _maybe_dodge() -> void:
+	## Roll away from a Tick about to pop, a Warden about to slam, or a
+	## swarm closing in. Cautious pilots react more reliably.
+	if not mech.can_dodge():
+		return
+	var pos := mech.position
+	var danger := Vector2.ZERO
+	var close := 0
+	for e in threats:
+		var d: float = e.pos.distance_to(pos)
+		if e.type == "tick" and d < 85.0:
+			danger += (pos - e.pos).normalized() * 3.0
+		elif e.type == "warden" and d < mech.radius + 30.0:
+			danger += (pos - e.pos).normalized() * 2.0
+		elif d < 45.0:
+			close += 1
+			danger += (pos - e.pos).normalized() * 0.3
+	if danger == Vector2.ZERO or (danger.length() < 2.0 and close < 6):
+		return
+	if rng.randf() > 0.45 + p.caution * 0.5:
+		return
+	var dir := danger.normalized().rotated(rng.randf_range(-0.5, 0.5))
+	for t in 4:
+		if not G.world.circle_hits(pos + dir * 70.0, mech.radius):
+			break
+		dir = dir.rotated(PI / 3.0 * (1 if t % 2 == 0 else -1) * (t + 1))
+	if mech.try_dodge(dir):
+		dodges += 1
+
+
+var dodges := 0
 
 
 func _pick_target():
@@ -280,7 +314,11 @@ func _act(delta: float) -> void:
 			if target != null:
 				var d: float = target.pos.distance_to(pos)
 				var to_t: Vector2 = (target.pos - pos).normalized()
+				# preferred range, but never outside what the primary can reach
+				var ws_r: Mech.WeaponState = mech.weapons["primary"]
 				var want: float = p.range
+				if ws_r:
+					want = clampf(float(ws_r.data.range) * 0.8, 90.0, p.range)
 				if d > want + 50.0:
 					desired = _navigate(target.pos, delta)
 				elif d < want - 70.0:
@@ -301,7 +339,7 @@ func _act(delta: float) -> void:
 				if pos.distance_to(goal) > 20.0:
 					desired = _navigate(goal, delta)
 		"retreat":
-			var anchor := player.position if player != mech else G.world.start_zone.get_center()
+			var anchor := player.position if player != mech else G.world.goal_zone.get_center()
 			var flee := (anchor - threat_center).normalized() if threat_center != Vector2.ZERO else Vector2.ZERO
 			desired = _navigate(anchor + flee * 70.0, delta)
 		"scavenge":
@@ -337,10 +375,6 @@ func _act(delta: float) -> void:
 
 
 func _road_goal() -> Vector2:
-	var road := G.world.road
-	for pt in road:
-		if pt.x > mech.position.x + 60.0:
-			return pt
 	return G.world.goal_zone.get_center()
 
 

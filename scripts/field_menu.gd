@@ -31,6 +31,8 @@ func toggle() -> void:
 		return
 	open = not open
 	G.player.busy_menu = open
+	if not open:
+		G.menu_closed_t = G.game_time
 	level = 0
 	if open:
 		_build_slot_rows()

@@ -51,6 +51,18 @@ var installing := {}
 var repairing := 0.0
 var repair_beam_target: Mech = null
 
+# Dodge roll: short burst, brief invulnerability, cooldown, some heat.
+const DODGE_TIME := 0.32
+const DODGE_IFRAMES := 0.24
+const DODGE_COOLDOWN := 2.0
+const DODGE_HEAT := 10.0
+var want_dodge := false
+var dodge_t := 0.0
+var dodge_cd := 0.0
+var dodge_dir := Vector2.ZERO
+var dodge_speed := 0.0
+var ghosts: Array = []            # afterimage positions (global)
+
 
 func setup(p_callsign: String, p_pilot: String, p_color: Color, p_loadout: Loadout, p_player: bool) -> void:
 	callsign = p_callsign
@@ -114,10 +126,27 @@ func _physics_process(delta: float) -> void:
 		heat = 100.0
 		G.say(callsign, "Overheat! Venting!", Color(1, 0.5, 0.3))
 
+	# dodge
+	dodge_cd = maxf(0.0, dodge_cd - delta)
+	if want_dodge:
+		want_dodge = false
+		try_dodge()
+	if dodge_t > 0.0:
+		dodge_t -= delta
+		if Engine.get_physics_frames() % 2 == 0:
+			ghosts.append(position)
+		var k := clampf(dodge_t / DODGE_TIME, 0.0, 1.0)
+		vel = dodge_dir * dodge_speed * (0.35 + 0.65 * k)
+		if dodge_t <= 0.0:
+			vel = dodge_dir * speed() * 0.6
+	if dodge_t <= 0.0 and not ghosts.is_empty() and Engine.get_physics_frames() % 3 == 0:
+		ghosts.pop_front()
+
 	# movement
 	var target_v := move_input.limit_length(1.0) * speed()
 	var accel := 520.0 if target_v.length() > vel.length() else 900.0
-	vel = vel.move_toward(target_v, accel * delta)
+	if dodge_t <= 0.0:
+		vel = vel.move_toward(target_v, accel * delta)
 	position = G.world.move_circle(position, vel * delta, radius)
 	_separate()
 	if vel.length() > 8.0:
@@ -159,6 +188,8 @@ func _read_player_input() -> void:
 		if m.length() > 4.0:
 			aim_dir = m.normalized()
 			aim_dist = m.length()
+	if Input.is_action_just_pressed("dodge") and G.game_time - G.menu_closed_t > 0.25:
+		want_dodge = true
 	want_primary = Input.is_action_pressed("fire_primary")
 	want_secondary = Input.is_action_pressed("fire_secondary")
 
@@ -186,9 +217,34 @@ func _update_weapons(delta: float) -> void:
 				ws.ammo = int(ws.data.mag)
 
 
+func can_dodge() -> bool:
+	return alive and dodge_t <= 0.0 and dodge_cd <= 0.0 and overheated <= 0.0 \
+		and not busy_menu and repairing <= 0.0
+
+
+func try_dodge(dir: Vector2 = Vector2.ZERO) -> bool:
+	if not can_dodge():
+		return false
+	if dir == Vector2.ZERO:
+		dir = move_input if move_input.length() > 0.2 else -aim_dir
+	dodge_dir = dir.normalized()
+	# lighter, faster frames roll further
+	dodge_speed = 250.0 + float(stats.speed) * 1.3
+	dodge_t = DODGE_TIME
+	dodge_cd = DODGE_COOLDOWN
+	heat += DODGE_HEAT
+	ghosts.clear()
+	G.projectiles.add_fx("puff", position, radius * 1.6, Color(0.55, 0.52, 0.45), 0.5)
+	return true
+
+
+func is_invulnerable() -> bool:
+	return dodge_t > DODGE_TIME - DODGE_IFRAMES
+
+
 func can_fire(key: String) -> bool:
 	var ws: WeaponState = weapons[key]
-	if ws == null or installing.has(key) or overheated > 0.0 or busy_menu or repairing > 0.0:
+	if ws == null or installing.has(key) or overheated > 0.0 or busy_menu or repairing > 0.0 or dodge_t > 0.0:
 		return false
 	return ws.reload_t <= 0.0 and ws.cooldown <= 0.0
 
@@ -257,6 +313,8 @@ func receive_repair(amount: float) -> void:
 func take_damage(amount: float, _from: Vector2 = Vector2.ZERO) -> void:
 	if not alive:
 		return
+	if is_invulnerable():
+		return
 	shield_delay = 3.0
 	if shield > 0.0:
 		var a := minf(shield, amount)
@@ -304,6 +362,10 @@ func _draw() -> void:
 		col = col.lerp(Color.WHITE, damage_flash * 0.7)
 	var side := facing.orthogonal()
 	var r := radius
+	# dodge afterimages
+	for i in ghosts.size():
+		var gp: Vector2 = ghosts[i] - position
+		draw_circle(gp, r * 0.9, Color(col, 0.08 + 0.22 * float(i + 1) / ghosts.size()))
 	# shadow
 	draw_circle(Vector2(3, 4), r + 2, Color(0, 0, 0, 0.35))
 	# legs (stomp animation)

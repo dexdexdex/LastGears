@@ -59,7 +59,9 @@ func _draw() -> void:
 	if G.tactical or (G.camera and G.camera.tac_blend > 0.05):
 		_draw_map(vs)
 	_draw_objective(vs)
-	_txt(Vector2(16, vs.y - 10), "WASD move · mouse aim · LMB weapon 1 · RMB weapon 2 · Q tactical · Esc refit · Enter pause · F11 fullscreen · F5 restart      (pad: sticks · R1/L1 · hold R2 · START)", 11, C_DIM)
+	if G.overworld:
+		_draw_overworld(vs)
+	_txt(Vector2(16, vs.y - 10), "WASD move · mouse aim · LMB/RMB weapons · Space dodge · Q tactical, Q again region map · Esc refit · Enter pause · F11 · F5 restart     (pad: sticks · R1/L1 · ○ dodge · hold R2 · touchpad map · START)", 11, C_DIM)
 	if banner_t > 0.0:
 		var a := clampf(banner_t, 0, 1)
 		var y := vs.y * 0.3
@@ -133,6 +135,11 @@ func _draw_player(vs: Vector2) -> void:
 	_bar(Rect2(x + 46, y + 2, 200, 8), m.heat / 100.0, heat_col)
 	if m.overheated > 0:
 		_txt(Vector2(x + 252, y + 10), "SHUTDOWN", 10, C_WARN)
+	# dodge readiness
+	var dfrac := 1.0 - m.dodge_cd / Mech.DODGE_COOLDOWN
+	var dcol := Color(0.5, 0.85, 1.0) if dfrac >= 1.0 else C_DIM
+	_bar(Rect2(x + 330, y + 4, 60, 4), dfrac, dcol)
+	_txt(Vector2(x + 330, y - 2), "DODGE" if dfrac >= 1.0 else "dodge", 9, dcol)
 	y += 22
 	for key in ["primary", "secondary"]:
 		var lbl := "R1" if key == "primary" else "L1"
@@ -239,6 +246,139 @@ func _draw_map(vs: Vector2) -> void:
 			draw_circle(r.position + m.position * k, 3.0 if m.is_player else 2.2, Color(m.color, a))
 	var view := G.camera.view_rect()
 	draw_rect(Rect2(r.position + view.position * k, view.size * k), Color(1, 1, 1, 0.3 * a), false, 1.0)
+
+
+const KIND_COL := {
+	"haven": Color(1.0, 0.82, 0.42),
+	"outpost": Color(0.65, 0.85, 0.6),
+	"hive": Color(1.0, 0.32, 0.28),
+	"ruin": Color(0.6, 0.62, 0.66),
+}
+
+
+func _draw_overworld(vs: Vector2) -> void:
+	## Region map: every haven and zone. Real time — the fight keeps going.
+	var at := G.atlas
+	if at == null:
+		return
+	var tsec := Time.get_ticks_msec() / 1000.0
+	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.02, 0.035, 0.03, 0.94))
+	var r := Rect2(Vector2(70, 110), vs - Vector2(140, 210))
+	# survey grid + faint contours
+	var gc := Color(0.4, 0.55, 0.4, 0.06)
+	for i in 21:
+		var gx := r.position.x + r.size.x * i / 20.0
+		draw_line(Vector2(gx, r.position.y), Vector2(gx, r.end.y), gc, 1.0)
+	for i in 13:
+		var gy := r.position.y + r.size.y * i / 12.0
+		draw_line(Vector2(r.position.x, gy), Vector2(r.end.x, gy), gc, 1.0)
+	var cr := RandomNumberGenerator.new()
+	cr.seed = 77
+	for i in 9:
+		var c := r.position + Vector2(cr.randf(), cr.randf()) * r.size
+		for k in 4:
+			draw_arc(c, 40.0 + k * 34.0 + cr.randf() * 10.0, 0, TAU, 48, Color(0.45, 0.6, 0.45, 0.05), 1.0)
+	draw_rect(r, C_LINE, false, 1.0)
+	_txt(Vector2(r.position.x, r.position.y - 46), "THE LONG ROAD — REGIONAL NETWORK", 22, C_AMBER)
+	_txt(Vector2(r.position.x, r.position.y - 24), "Havens, outposts and the machine-held ground between them.   Q / M / touchpad: close   ·   the fight keeps running while you look", 12, C_DIM)
+
+	var P := func(i: int) -> Vector2: return r.position + at.nodes[i].pos * r.size
+	# hive influence
+	for n in at.nodes:
+		if n.kind == "hive":
+			var hp: Vector2 = r.position + n.pos * r.size
+			draw_circle(hp, r.size.x * 0.065, Color(1, 0.25, 0.2, 0.035))
+			draw_circle(hp, r.size.x * 0.035, Color(1, 0.25, 0.2, 0.05))
+	# zones (edges)
+	for i in at.edges.size():
+		var e: Dictionary = at.edges[i]
+		var a: Vector2 = P.call(e.a)
+		var b: Vector2 = P.call(e.b)
+		var is_cur: bool = i == at.current_edge
+		var tcol := Color(0.55, 0.65, 0.55).lerp(Color(1, 0.35, 0.28), (e.threat - 1) / 4.0)
+		if is_cur:
+			draw_line(a, b, Color(C_AMBER, 0.25), 9.0)
+			draw_line(a, b, C_AMBER, 2.5)
+		elif e.known:
+			draw_line(a, b, Color(tcol, 0.75), 1.6)
+		else:
+			draw_dashed_line(a, b, Color(0.5, 0.55, 0.5, 0.35), 1.2, 7.0)
+		var mid := (a + b) * 0.5
+		var lab: String = e.zone if (e.known or is_cur) else "unscouted"
+		var lcol := C_AMBER if is_cur else (Color(tcol, 0.9) if e.known else Color(C_DIM, 0.6))
+		_txt(mid + Vector2(-60, -6), lab, 11 if not is_cur else 13, lcol, HORIZONTAL_ALIGNMENT_CENTER, 120)
+		if e.known or is_cur:
+			for k in 5:
+				var pc := tcol if k < e.threat else Color(0.3, 0.33, 0.3, 0.6)
+				draw_rect(Rect2(mid + Vector2(-17 + k * 7, 2), Vector2(5, 4)), pc)
+	# squad marker along the current zone
+	var ce: Dictionary = at.current()
+	var sa: Vector2 = P.call(at.start_idx)
+	var sb: Vector2 = P.call(at.goal_idx)
+	var prog := G.world.progress_of(G.squad_centroid()) if G.world else 0.0
+	var sp := sa.lerp(sb, prog)
+	var pulse := 0.5 + 0.5 * sin(tsec * 5.0)
+	draw_circle(sp, 6.0 + pulse * 3.0, Color(0.45, 0.85, 1.0, 0.25))
+	draw_circle(sp, 5.0, Color(0.45, 0.85, 1.0))
+	_txt(sp + Vector2(9, -8), "SQUAD (%d)" % G.alive_squad().size(), 11, Color(0.6, 0.9, 1.0))
+	# nodes
+	var hover := -1
+	var mp := get_local_mouse_position()
+	for i in at.nodes.size():
+		var n: Dictionary = at.nodes[i]
+		var p: Vector2 = P.call(i)
+		var col: Color = KIND_COL[n.kind]
+		match n.kind:
+			"haven":
+				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col.darkened(0.6))
+				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col, false, 2.0)
+				draw_circle(p, 2.5, col)
+			"outpost":
+				draw_rect(Rect2(p - Vector2(6, 6), Vector2(12, 12)), col, false, 1.5)
+			"hive":
+				var hr := 8.0 + 2.0 * sin(tsec * 3.0 + i)
+				var pts := PackedVector2Array()
+				for k in 6:
+					pts.append(p + Vector2.from_angle(TAU * k / 6.0 + tsec * 0.3) * hr)
+				draw_colored_polygon(pts, col.darkened(0.5))
+				pts.append(pts[0])
+				draw_polyline(pts, col, 1.5)
+			"ruin":
+				draw_circle(p, 6.0, col.darkened(0.6))
+				draw_arc(p, 6.0, 0, TAU, 16, col, 1.2)
+		var ncol := col if n.kind != "ruin" else col.lightened(0.2)
+		_txt(p + Vector2(12, 4), n.name, 13 if n.kind == "haven" else 11, ncol)
+		if i == at.start_idx or i == at.goal_idx:
+			_txt(p + Vector2(12, 18), "DEPARTED" if i == at.start_idx else "DESTINATION", 9, C_DIM)
+		if mp.distance_to(p) < 16.0:
+			hover = i
+	if hover >= 0:
+		var n2: Dictionary = at.nodes[hover]
+		var bp: Vector2 = P.call(hover) + Vector2(16, 24)
+		var box := Rect2(bp, Vector2(250, 58))
+		if box.end.x > vs.x - 10:
+			box.position.x -= 280
+		draw_rect(box, Color(0.02, 0.04, 0.03, 0.95))
+		draw_rect(box, KIND_COL[n2.kind], false, 1.0)
+		_txt(box.position + Vector2(8, 16), "%s · %s" % [n2.name, n2.kind.to_upper()], 12, KIND_COL[n2.kind])
+		if n2.pop > 0:
+			_txt(box.position + Vector2(8, 32), "pop. %d" % n2.pop, 11, C_TEXT)
+		_txt(box.position + Vector2(8, 48), n2.note, 11, C_DIM)
+	# current leg readout
+	var pr := Rect2(Vector2(r.position.x, r.end.y + 14), Vector2(560, 56))
+	draw_rect(pr, C_PANEL)
+	draw_rect(pr, C_LINE, false, 1.0)
+	_txt(pr.position + Vector2(10, 18), "CURRENT LEG  %s → %s" % [at.nodes[at.start_idx].name, at.nodes[at.goal_idx].name], 12, C_AMBER)
+	_txt(pr.position + Vector2(10, 36), "Zone: %s  ·  %s  ·  threat %d/5" % [ce.zone, ce.terrain, ce.threat], 12, C_TEXT)
+	_bar(Rect2(pr.position + Vector2(10, 44), Vector2(540, 4)), prog, C_AMBER)
+	# legend
+	var lx := r.end.x - 420
+	var ly := r.end.y + 34
+	for k in ["haven", "outpost", "hive", "ruin"]:
+		draw_rect(Rect2(Vector2(lx, ly - 8), Vector2(9, 9)), KIND_COL[k])
+		_txt(Vector2(lx + 14, ly), {"haven": "Haven", "outpost": "Outpost", "hive": "Machine hive", "ruin": "Ruin"}[k], 11, C_DIM)
+		lx += 100
+	_txt(Vector2(r.end.x - 420, ly + 18), "▪▪▪▪▪ zone threat · dashed = unscouted", 10, C_DIM)
 
 
 func _draw_end(vs: Vector2) -> void:

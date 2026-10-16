@@ -11,7 +11,7 @@ const H := 96
 var blocked := PackedByteArray()      # 1 = solid (building / wall / border)
 var buildings: Array = []             # Array[Rect2i] in cells
 var walls: Array = []                 # Array[Rect2i] settlement walls
-var road: PackedVector2Array          # px
+var plazas: Array = []               # [center px, radius px] open ground, no buildings
 var specks: Array = []                # ground texture [pos, size, shade]
 var craters: Array = []               # [pos, r]
 var start_zone := Rect2()             # px, settlement A interior
@@ -53,24 +53,15 @@ func generate(seed_value: int) -> void:
 	goal_zone = Rect2(Vector2(sb.position + Vector2i(1, 1)) * CELL, Vector2(sb.size - Vector2i(2, 2)) * CELL)
 	start_pos = start_zone.get_center() + Vector2(CELL * 2, 0)
 
-	# Road: wandering polyline gate-to-gate.
-	road = PackedVector2Array()
-	var y := float(sa.get_center().y)
-	var x := sa.end.x
-	road.append(Vector2(x, y) * CELL)
-	while x < sb.position.x - 1:
-		x += rng.randi_range(8, 14)
-		x = mini(x, sb.position.x - 1)
-		if x < sb.position.x - 6:
-			y = clampf(y + rng.randf_range(-9, 9), 14, H - 14)
-		else:
-			y = float(sb.get_center().y)
-		road.append(Vector2(x, y) * CELL)
-	road.append(Vector2(sb.position.x + 1, sb.get_center().y) * CELL)
+	# Plazas: open squares/rubble fields so the city isn't wall-to-wall blocks.
+	plazas.clear()
+	for i in 14:
+		var c := Vector2(rng.randf_range(22, W - 22), rng.randf_range(10, H - 10)) * CELL
+		plazas.append([c, rng.randf_range(4.0, 8.5) * CELL])
 
 	# Buildings: random rects with a 2-cell gutter so heavy mechs fit between.
 	var tries := 0
-	while tries < 2400 and buildings.size() < 270:
+	while tries < 3200 and buildings.size() < 330:
 		tries += 1
 		var bw := rng.randi_range(2, 7)
 		var bh := rng.randi_range(2, 6)
@@ -101,7 +92,7 @@ func generate(seed_value: int) -> void:
 		tries += 1
 		var cx := rng.randi_range(18, W - 18)
 		var cy := rng.randi_range(4, H - 5)
-		if is_solid(cx, cy) or _near_road(Vector2(cx, cy) * CELL, 40.0):
+		if is_solid(cx, cy):
 			continue
 		var adj := is_solid(cx + 1, cy) or is_solid(cx - 1, cy) or is_solid(cx, cy + 1) or is_solid(cx, cy - 1)
 		if not adj and rng.randf() < 0.75:
@@ -140,26 +131,12 @@ func _rect_ok(r: Rect2i, sa: Rect2i, sb: Rect2i) -> bool:
 	for b in buildings:
 		if grown.intersects(b):
 			return false
-	var px := Rect2(Vector2(r.position) * CELL, Vector2(r.size) * CELL).grow(CELL * 2.5)
-	for i in road.size() - 1:
-		if _seg_rect(road[i], road[i + 1], px):
+	var px := Rect2(Vector2(r.position) * CELL, Vector2(r.size) * CELL)
+	for pl in plazas:
+		var nearest := Vector2(clampf(pl[0].x, px.position.x, px.end.x), clampf(pl[0].y, px.position.y, px.end.y))
+		if nearest.distance_to(pl[0]) < pl[1]:
 			return false
 	return true
-
-
-func _seg_rect(a: Vector2, b: Vector2, r: Rect2) -> bool:
-	var steps := int(a.distance_to(b) / (CELL * 0.5)) + 1
-	for i in steps + 1:
-		if r.has_point(a.lerp(b, float(i) / steps)):
-			return true
-	return false
-
-
-func _near_road(p: Vector2, d: float) -> bool:
-	for i in road.size() - 1:
-		if Geometry2D.get_closest_point_to_segment(p, road[i], road[i + 1]).distance_to(p) < d:
-			return true
-	return false
 
 
 func _set_solid(x: int, y: int) -> void:
@@ -344,7 +321,6 @@ func flow_dir(p: Vector2) -> Vector2:
 # ---------------------------------------------------------------- drawing
 
 const COL_GROUND := Color(0.15, 0.16, 0.13)
-const COL_ROAD := Color(0.21, 0.20, 0.17)
 const COL_BLDG := Color(0.085, 0.09, 0.085)
 const COL_ROOF := Color(0.12, 0.125, 0.115)
 const COL_EDGE := Color(0.30, 0.31, 0.27)
@@ -366,15 +342,14 @@ func _draw() -> void:
 		draw_line(Vector2(x * CELL, 0), Vector2(x * CELL, sz.y), gc, 1.0)
 	for y in range(0, H + 1, 5):
 		draw_line(Vector2(0, y * CELL), Vector2(sz.x, y * CELL), gc, 1.0)
-	# road
-	draw_polyline(road, COL_ROAD, CELL * 2.6, true)
-	for i in road.size() - 1:
-		var a := road[i]
-		var b := road[i + 1]
-		var n := int(a.distance_to(b) / 40.0)
-		for k in n:
-			if k % 2 == 0:
-				draw_line(a.lerp(b, float(k) / n), a.lerp(b, float(k + 0.5) / n), Color(0.32, 0.30, 0.22, 0.6), 2.0)
+	# plazas: rubble-strewn open ground
+	for pl in plazas:
+		draw_circle(pl[0], pl[1] * 0.85, Color(0.17, 0.17, 0.14, 0.5))
+		var pr := RandomNumberGenerator.new()
+		pr.seed = int(pl[0].x * 31 + pl[0].y)
+		for k in 10:
+			var rp: Vector2 = pl[0] + Vector2.from_angle(pr.randf() * TAU) * pr.randf() * pl[1] * 0.8
+			draw_rect(Rect2(rp, Vector2(pr.randf_range(3, 9), pr.randf_range(3, 7))), COL_EDGE.darkened(0.45))
 	# buildings
 	for r in buildings:
 		var rp := Rect2(Vector2(r.position) * CELL, Vector2(r.size) * CELL)
@@ -413,17 +388,6 @@ func _draw_settlement(z: Rect2, label: String, col: Color, font: Font) -> void:
 func _build_map_texture() -> void:
 	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0.12, 0.14, 0.11, 0.92))
-	for i in road.size() - 1:
-		var a := road[i] / CELL
-		var b := road[i + 1] / CELL
-		var n := int(a.distance_to(b)) + 1
-		for k in n + 1:
-			var p := a.lerp(b, float(k) / n)
-			for oy in [-1, 0, 1]:
-				var px := int(p.x)
-				var py: int = int(p.y) + oy
-				if px >= 0 and py >= 0 and px < W and py < H:
-					img.set_pixel(px, py, Color(0.3, 0.28, 0.2))
 	for x in W:
 		for y in H:
 			if is_solid(x, y):
