@@ -7,7 +7,7 @@ extends RefCounted
 const PERSONALITIES := {
 	"rook": {
 		"tag": "Brawler", "aggression": 0.9, "caution": 0.15, "loyalty": 0.45, "greed": 0.2,
-		"discipline": 0.2, "range": 150.0, "medic": false, "slot": Vector2(40, -70),
+		"discipline": 0.2, "range": 150.0, "medic": false, "slot": Vector2(40, -70), "watch": 0.95,
 		"barks": {
 			"engage": ["Contact. Let 'em come.", "Fresh meat.", "Moving up!", "Mine."],
 			"cover": ["On you, %s!", "Get behind me, %s.", "I've got %s's back."],
@@ -22,11 +22,12 @@ const PERSONALITIES := {
 			"ally_down": ["%s! ...They'll pay for that."],
 			"low_hp": ["Took a beating. Still walking."],
 			"overheat": ["Running hot!"],
+			"form_0": ["On you, boss."], "form_1": ["Tightening up. Fine."], "form_2": ["Spreading out. More for me."], "form_3": ["Holding. Bring 'em here."],
 		},
 	},
 	"wren": {
 		"tag": "Marksman", "aggression": 0.4, "caution": 0.75, "loyalty": 0.35, "greed": 0.75,
-		"discipline": 0.85, "range": 380.0, "medic": false, "slot": Vector2(-60, 70),
+		"discipline": 0.85, "range": 380.0, "medic": false, "slot": Vector2(-60, 70), "watch": -0.95,
 		"barks": {
 			"engage": ["Eyes on. Engaging at range.", "Got a line on them.", "Target marked."],
 			"cover": ["Covering %s.", "Watching %s's flank."],
@@ -41,11 +42,12 @@ const PERSONALITIES := {
 			"ally_down": ["Lost %s's signal..."],
 			"low_hp": ["I'm hurt. Staying back."],
 			"overheat": ["Overheating, holding fire."],
+			"form_0": ["Following."], "form_1": ["Closing in."], "form_2": ["Fanning out. Watching the flank."], "form_3": ["Holding position. Overwatch."],
 		},
 	},
 	"mags": {
 		"tag": "Medic", "aggression": 0.5, "caution": 0.5, "loyalty": 0.95, "greed": 0.3,
-		"discipline": 0.6, "range": 260.0, "medic": true, "slot": Vector2(-70, -20),
+		"discipline": 0.6, "range": 260.0, "medic": true, "slot": Vector2(-70, -20), "watch": PI,
 		"barks": {
 			"engage": ["Engaging!", "They're on us!", "Contact, contact!"],
 			"cover": ["Hang on %s, I'm coming!", "Covering %s!"],
@@ -61,12 +63,13 @@ const PERSONALITIES := {
 			"ally_down": ["No — %s! I'm sorry..."],
 			"low_hp": ["Hull integrity low!"],
 			"overheat": ["Too hot, cooling off!"],
+			"form_0": ["Right behind you!"], "form_1": ["Grouping up, stay close!"], "form_2": ["Spreading out — shout if you need me!"], "form_3": ["Holding here!"],
 		},
 	},
 	# Used for --bot playtests: drives the player toward Haven.
 	"lead": {
 		"tag": "Lead", "aggression": 0.55, "caution": 0.5, "loyalty": 0.0, "greed": 0.35,
-		"discipline": 0.6, "range": 300.0, "medic": false, "slot": Vector2.ZERO, "barks": {},
+		"discipline": 0.6, "range": 300.0, "medic": false, "slot": Vector2.ZERO, "watch": 0.0, "barks": {},
 	},
 }
 
@@ -119,7 +122,8 @@ func think(delta: float) -> void:
 func _decide() -> void:
 	var player := G.player
 	var pos := mech.position
-	threats = G.enemies.query_radius(pos, 500.0)
+	threats = G.enemies.query_radius(pos, 500.0).filter(
+		func(e): return e.seen or e.pos.distance_squared_to(pos) < PROX * PROX)
 	threats.sort_custom(func(a, b): return a.pos.distance_squared_to(pos) < b.pos.distance_squared_to(pos))
 	if threats.size() > 30:
 		threats.resize(30)
@@ -137,10 +141,12 @@ func _decide() -> void:
 			self_pressure += 1
 	var hp := mech.hp_ratio()
 	var scores := {}
-	var dp := pos.distance_to(player.position) if player and player != mech else 0.0
+	var dp := pos.distance_to(_formation_goal()) if player and player != mech else 0.0
 
 	if key != "lead":
-		scores["follow"] = 0.25 + p.loyalty * 0.3 + clampf((dp - 170.0) / 300.0, 0.0, 1.0) * 0.9
+		scores["follow"] = 0.25 + p.loyalty * 0.3 + clampf((dp - 40.0) / 220.0, 0.0, 1.0) * 0.9
+		if G.formation == 1 or G.formation == 3:
+			scores["follow"] += 0.15     # disciplined formations: stick to your spot
 	else:
 		scores["follow"] = 0.45      # lead heads east to the haven
 
@@ -172,7 +178,7 @@ func _decide() -> void:
 	if calm:
 		cache = G.pickups.nearest(pos, 260.0 + p.greed * 220.0)
 		if cache != null and ((key == "lead" and G.world.progress_of(mech.position) < 0.9) or (key != "lead" and cache.pos.distance_to(player.position) < 520.0)):
-			scores["scavenge"] = 0.3 + p.greed * 0.55
+			scores["scavenge"] = 0.3 + p.greed * 0.55 if G.formation in [0, 2] else 0.0
 
 	if p.medic:
 		heal_ally = null
@@ -230,6 +236,7 @@ func _maybe_dodge() -> void:
 
 
 var dodges := 0
+const PROX := 110.0     # hull proximity sensor: always aware this close
 
 
 func _pick_target():
@@ -307,7 +314,7 @@ func _act(delta: float) -> void:
 			if key == "lead":
 				desired = _navigate(_road_goal(), delta)
 			else:
-				var goal: Vector2 = player.position + p.slot.rotated(player.facing.angle())
+				var goal: Vector2 = _formation_goal()
 				if pos.distance_to(goal) > 28.0:
 					desired = _navigate(goal, delta)
 		"engage":
@@ -329,9 +336,10 @@ func _act(delta: float) -> void:
 						strafe *= -1.0
 				# leash: don't wander off from the lead
 				if key != "lead":
-					var leash: float = 260.0 + (1.0 - p.loyalty) * 240.0
-					if pos.distance_to(player.position) > leash:
-						desired = (desired * 0.3 + _navigate(player.position, delta)).normalized()
+					var leash: float = (260.0 + (1.0 - p.loyalty) * 240.0) * [1.0, 0.6, 1.5, 0.8][G.formation]
+					var anchor: Vector2 = G.hold_pos if G.formation == 3 else player.position
+					if pos.distance_to(anchor) > leash:
+						desired = (desired * 0.3 + _navigate(anchor, delta)).normalized()
 		"cover":
 			if cover_ally and cover_ally.alive:
 				var away: Vector2 = threat_center - cover_ally.position if threat_center != Vector2.ZERO else cover_ally.facing
@@ -374,6 +382,19 @@ func _act(delta: float) -> void:
 	_aim_and_fire()
 
 
+func _formation_goal() -> Vector2:
+	var player := G.player
+	var ang := player.facing.angle()
+	match G.formation:
+		1:  # group up: tight around the lead
+			return player.position + (p.slot * 0.5).rotated(ang)
+		2:  # spread out: wide arc, more ground covered
+			return player.position + (p.slot.normalized() * 200.0).rotated(ang)
+		3:  # hold: stay where the order was given
+			return G.hold_pos + p.slot * 0.7
+	return player.position + p.slot.rotated(ang)
+
+
 func _road_goal() -> Vector2:
 	return G.world.goal_zone.get_center()
 
@@ -403,10 +424,15 @@ func _aim_and_fire() -> void:
 	mech.want_secondary = false
 	var pos := mech.position
 	if target == null:
-		if mech.vel.length() > 10.0:
-			mech.aim_dir = mech.aim_dir.slerp(mech.vel.normalized(), 0.1)
-		elif threat_center != Vector2.ZERO:
-			mech.aim_dir = mech.aim_dir.slerp((threat_center - pos).normalized(), 0.1)
+		var look: Vector2
+		if threat_center != Vector2.ZERO:
+			look = (threat_center - pos).normalized()
+		elif mech == G.player:
+			look = mech.vel.normalized() if mech.vel.length() > 10.0 else mech.aim_dir
+		else:
+			# cover the arc the lead isn't looking at, with a slow scan
+			look = G.player.aim_dir.rotated(p.watch + sin(G.game_time * 0.6 + p.watch * 3.0) * 0.45)
+		mech.aim_dir = mech.aim_dir.slerp(look, 0.08).normalized()
 		return
 	var d: float = target.pos.distance_to(pos)
 	var ws_p: Mech.WeaponState = mech.weapons["primary"]

@@ -20,13 +20,20 @@ var horde_spawned := 0
 var horde_tick := 0.0
 var horde_dirs: Array = []
 var hordes := 0
-var max_enemies := 380
+var max_enemies := 1000
 var rng := RandomNumberGenerator.new()
 var log_lines: Array = []       # debug history
 
 
 func _ready() -> void:
 	rng.randomize()
+
+
+func populate_zone() -> void:
+	## Dormant crawler fields scattered across the zone at the start of a leg.
+	var r := RandomNumberGenerator.new()
+	r.seed = G.world.rng.seed + 5
+	G.enemies.seed_dormant(int(G.world.W * G.world.H / 160.0) + G.threat * 40, G.world.start_c, r)
 
 
 func report_damage(amount: float, _m: Mech) -> void:
@@ -60,15 +67,15 @@ func _process(delta: float) -> void:
 			trickle_t -= delta
 			if trickle_t <= 0.0:
 				trickle_t = rng.randf_range(3.5, 6.5) / (1.0 + prog)
-				_spawn_pack(int((rng.randi_range(3, 6) + prog * 6.0) * (0.7 + 0.15 * G.threat)), prog, false)
+				_spawn_pack(int((rng.randi_range(10, 18) + prog * 14.0) * (0.7 + 0.15 * G.threat)), prog, false)
 			if t > build_len or intensity > 70.0:
 				_enter(Phase.PEAK)
 		Phase.PEAK:
 			if horde_spawned < horde_budget:
 				horde_tick -= delta
 				if horde_tick <= 0.0:
-					horde_tick = 0.6
-					var n := mini(10, horde_budget - horde_spawned)
+					horde_tick = 0.5
+					var n := mini(22, horde_budget - horde_spawned)
 					_spawn_pack(n, prog, true)
 					horde_spawned += n
 			elif t > 12.0 and G.enemies.count_near(G.squad_centroid(), 1100.0) < 4:
@@ -90,7 +97,7 @@ func _enter(p: int) -> void:
 		Phase.PEAK:
 			hordes += 1
 			var prog := G.world.progress_of(G.squad_centroid())
-			horde_budget = int((36 + hordes * 10 + prog * 45) * (0.6 + 0.2 * G.threat))
+			horde_budget = int((140 + hordes * 40 + prog * 120) * (0.6 + 0.2 * G.threat))
 			horde_spawned = 0
 			horde_tick = 2.5     # a beat of warning before they arrive
 			var base := rng.randf() * TAU
@@ -98,6 +105,7 @@ func _enter(p: int) -> void:
 			if hordes >= 2:
 				horde_dirs.append(base + rng.randf_range(1.6, 3.0))
 			G.announce("SEISMIC CONTACT — HORDE INBOUND", Color(1, 0.4, 0.3))
+			G.enemies.wake_around(G.squad_centroid(), 900.0)
 			_squad_bark("horde")
 	log_lines.append("%5.0fs %s" % [G.game_time, PHASE_NAMES[p]])
 	if G.bot_mode:
@@ -111,7 +119,7 @@ func _spawn_pack(n: int, prog: float, horde: bool) -> void:
 	var angle: float = horde_dirs[rng.randi() % horde_dirs.size()] if horde else rng.randf() * TAU
 	# Lean packs toward the direction of travel so they meet you, not chase you.
 	if not horde and rng.randf() < 0.5:
-		angle = rng.randf_range(-1.0, 1.0)
+		angle = G.world.dir.angle() + rng.randf_range(-1.0, 1.0)
 	var origin := _find_spawn(center, angle)
 	if origin == Vector2.INF:
 		return
@@ -126,16 +134,20 @@ func _spawn_pack(n: int, prog: float, horde: bool) -> void:
 
 
 func _roll_type(prog: float, horde: bool) -> String:
+	## Mostly slow crawlers; some medium skitters; a few fast ticks.
 	var r := rng.randf()
-	var tick_p := 0.08 + prog * 0.08 + (0.04 if horde else 0.0)
-	var spit_p := 0.14 + prog * 0.1
+	var tick_p := 0.03 + prog * 0.03 + (0.02 if horde else 0.0)
+	var spit_p := 0.07 + prog * 0.05
+	var skit_p := 0.18 + prog * 0.08
 	if r < tick_p:
 		return "tick"
 	if r < tick_p + spit_p:
 		return "spitter"
-	if not horde and r > 0.985 - prog * 0.03:
+	if r < tick_p + spit_p + skit_p:
+		return "skitter"
+	if not horde and r > 0.995 - prog * 0.01:
 		return "warden"
-	return "skitter"
+	return "crawler"
 
 
 func _find_spawn(center: Vector2, angle: float) -> Vector2:

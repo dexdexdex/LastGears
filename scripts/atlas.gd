@@ -6,6 +6,7 @@ extends RefCounted
 ## Positions are normalised 0..1 and laid out by the HUD.
 
 const SEED := 20761
+const ASPECT := Vector2(2.1, 1.0)   # region map is drawn ~2:1; directions use this
 
 const HAVENS := ["Haven-7", "Bastion Kell", "Lantern", "Sanctum Ory", "Deepwell", "Hearthome"]
 const OUTPOSTS := ["Outpost Gravel", "Tamsin Post", "Relay Nine"]
@@ -23,8 +24,12 @@ var current_edge := 0
 var rng := RandomNumberGenerator.new()
 
 
-func _init() -> void:
-	rng.seed = SEED
+var seed_used := SEED
+
+
+func _init(seed_value: int = SEED) -> void:
+	seed_used = seed_value
+	rng.seed = seed_value
 	_place_nodes()
 	_link()
 	_label_edges()
@@ -51,15 +56,16 @@ func _place_nodes() -> void:
 	# Gravel sits west-of-centre; Haven-7 is its nearest neighbour to the east.
 	var gi := 0
 	var bd := INF
+	var home := Vector2(rng.randf_range(0.2, 0.8), rng.randf_range(0.2, 0.8))
 	for i in pts.size():
-		var d: float = pts[i].distance_to(Vector2(0.3, 0.55))
+		var d: float = pts[i].distance_to(home)
 		if d < bd:
 			bd = d
 			gi = i
 	var hi := -1
 	bd = INF
 	for i in pts.size():
-		if i != gi and pts[i].x > pts[gi].x + 0.06:
+		if i != gi:
 			var d: float = pts[i].distance_to(pts[gi])
 			if d < bd:
 				bd = d
@@ -193,6 +199,11 @@ func _label_edges() -> void:
 	cur.zone = "Ash Sprawl"
 	cur.terrain = "dead city"
 	cur.threat = 2          # the opening leg is a gentle one
+
+
+func leg_dir(from_idx: int, to_idx: int) -> Vector2:
+	## Travel direction as it appears on the region map.
+	return ((nodes[to_idx].pos - nodes[from_idx].pos) * ASPECT).normalized()
 
 
 func current() -> Dictionary:

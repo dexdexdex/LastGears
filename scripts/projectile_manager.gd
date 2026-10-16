@@ -71,6 +71,8 @@ func add_fx(type: String, pos: Vector2, r: float, color: Color, dur: float) -> v
 
 func explode(pos: Vector2, radius: float, dmg: float, team: int, hurt_mechs: bool) -> void:
 	add_fx("explosion", pos, radius, Color(1, 0.65, 0.3), 0.45)
+	if G.lighting:
+		G.lighting.flash(pos, radius * 3.0, 1.0)
 	G.enemies.damage_radius(pos, radius, dmg)
 	if hurt_mechs or team == 1:
 		for m in G.squad:

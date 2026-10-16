@@ -2,6 +2,8 @@ class_name Loadout
 extends RefCounted
 ## A mech's parts, and the derived stats they produce.
 
+const DMG_MULT := 2.2
+
 var chassis_id: String = "vanguard"
 var primary: String = ""
 var secondary: String = ""
@@ -100,6 +102,12 @@ func weapon_stats(id: String, s: Dictionary) -> Dictionary:
 		return {}
 	var w: Dictionary = PartsDB.WEAPONS[id].duplicate()
 	w["id"] = id
+	# Swarm-clearing tuning: everything hits much harder, carries more, runs cooler.
+	w.dmg *= DMG_MULT
+	w.splash *= 1.25
+	w.heat *= 0.8
+	if w.mag > 0:
+		w.mag = int(round(w.mag * 1.6))
 	w.spread *= s.spread_mult
 	w.range *= s.range_mult
 	w.rof *= s.rof_mult * s.power_ratio

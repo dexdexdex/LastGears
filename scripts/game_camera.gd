@@ -3,7 +3,7 @@ extends Camera2D
 ## Follows the player with aim look-ahead. Hold R2 to pull back to the
 ## tactical view. Trauma-based screen shake.
 
-const ZOOM_FIELD := 1.55
+const ZOOM_FIELD := 1.4
 const ZOOM_TACTICAL := 0.42
 
 var trauma := 0.0

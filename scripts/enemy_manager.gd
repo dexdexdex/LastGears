@@ -3,14 +3,19 @@ extends Node2D
 ## The machine swarm. Hundreds of tiny dots simulated and drawn in one node.
 
 const TYPES := {
-	# Swarm fodder. Fast, fragile, bites.
+	# The bulk of the swarm. Slow, fragile, endless.
+	"crawler": {
+		"name": "Crawler", "hp": 12.0, "speed": 36.0, "r": 3.0, "armor": 0.0,
+		"color": Color(0.78, 0.3, 0.24), "melee": 6.0, "melee_cd": 0.9, "drop": 0.015,
+	},
+	# Medium-pace biters.
 	"skitter": {
-		"name": "Skitter", "hp": 14.0, "speed": 150.0, "r": 3.0, "armor": 0.0,
+		"name": "Skitter", "hp": 16.0, "speed": 88.0, "r": 3.0, "armor": 0.0,
 		"color": Color(0.95, 0.28, 0.22), "melee": 7.0, "melee_cd": 0.6, "drop": 0.04,
 	},
 	# Ranged. Keeps its distance and lobs slow bolts.
 	"spitter": {
-		"name": "Spitter", "hp": 34.0, "speed": 70.0, "r": 4.0, "armor": 0.0,
+		"name": "Spitter", "hp": 34.0, "speed": 52.0, "r": 4.0, "armor": 0.0,
 		"color": Color(1.0, 0.62, 0.15), "ranged": true, "shot_dmg": 9.0, "shot_cd": 1.9,
 		"keep": 250.0, "shot_speed": 270.0, "drop": 0.06,
 	},
@@ -21,7 +26,7 @@ const TYPES := {
 	},
 	# Armoured brute. Shrugs off small rounds; slams.
 	"warden": {
-		"name": "Warden", "hp": 320.0, "speed": 54.0, "r": 8.0, "armor": 5.0,
+		"name": "Warden", "hp": 380.0, "speed": 44.0, "r": 8.0, "armor": 5.0,
 		"color": Color(0.85, 0.35, 0.98), "melee": 34.0, "melee_cd": 1.4, "drop": 1.0,
 	},
 }
@@ -43,11 +48,18 @@ class Enemy:
 	var t := 0.0
 	var jitter := 1.0
 	var strafe := 1.0
+	var awake := true          # dormant swarm fields idle until something comes close
+	var wander := Vector2.ZERO
+	var seen := false          # inside some squad mech's vision cone right now
+	var seen_t := -99.0
+
+const WAKE_R := 300.0
 
 var list: Array = []
 var buckets := {}
 const BUCKET := 48.0
 var flow_timer := 0.0
+var vis_t := 0.0
 
 
 func spawn(type: String, pos: Vector2) -> Enemy:
@@ -82,6 +94,10 @@ func _physics_process(delta: float) -> void:
 	var alive_mechs := G.alive_squad()
 	if alive_mechs.is_empty():
 		return
+	vis_t -= delta
+	if vis_t <= 0.0:
+		vis_t = 0.12
+		_update_visibility(alive_mechs)
 	for e in list:
 		if e.alive:
 			_think(e, delta, alive_mechs)
@@ -97,6 +113,19 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	e.t += delta
 	e.cd -= delta
 	e.flash = maxf(0.0, e.flash - delta * 6.0)
+	if not e.awake:
+		e.los_t -= delta
+		if e.los_t <= 0.0:
+			e.los_t = 0.5
+			for m in mechs:
+				if e.pos.distance_squared_to(m.position) < WAKE_R * WAKE_R:
+					wake_around(e.pos, 140.0)
+					break
+			if randf() < 0.3:
+				e.wander = Vector2.from_angle(randf() * TAU) * randf_range(0.0, 8.0)
+		e.vel = e.vel.lerp(e.wander, clampf(2.0 * delta, 0, 1))
+		e.pos = G.world.move_circle(e.pos, e.vel * delta, e.r)
+		return
 	# nearest mech
 	var best: Mech = null
 	var bd := INF
@@ -212,12 +241,53 @@ func query_segment(a: Vector2, b: Vector2, pad: float) -> Array:
 
 
 func count_near(p: Vector2, r: float) -> int:
+	## Awake hostiles only: dormant fields don't count as pressure.
 	var n := 0
 	var r2 := r * r
 	for e in list:
-		if e.alive and e.pos.distance_squared_to(p) < r2:
+		if e.alive and e.awake and e.pos.distance_squared_to(p) < r2:
 			n += 1
 	return n
+
+
+func _update_visibility(mechs: Array) -> void:
+	## An enemy is "seen" if it's inside any squad mech's light cone with a
+	## clear line of sight (or inside a hull halo). Shared across the squad.
+	for e in list:
+		var seen := false
+		for m in mechs:
+			if Lighting.in_cone(m, e.pos):
+				if e.pos.distance_squared_to(m.position) < Lighting.HALO * Lighting.HALO or G.world.has_los(m.position, e.pos):
+					seen = true
+					break
+		e.seen = seen
+		if seen:
+			e.seen_t = G.game_time
+
+
+func wake_around(p: Vector2, r: float) -> void:
+	for o in query_radius(p, r):
+		o.awake = true
+	for o in list:      # dormant ones aren't always bucketed near p yet
+		if not o.awake and o.pos.distance_squared_to(p) < r * r:
+			o.awake = true
+
+
+func seed_dormant(count: int, avoid: Vector2, rng: RandomNumberGenerator) -> void:
+	## Scatter idle clusters of slow crawlers (with a few skitters) across the zone.
+	var placed := 0
+	var tries := 0
+	while placed < count and tries < 400:
+		tries += 1
+		var c := Vector2(rng.randf() * G.world.W, rng.randf() * G.world.H) * World.CELL
+		if G.world.is_solid_at(c) or c.distance_to(avoid) < 900.0:
+			continue
+		var n := rng.randi_range(8, 22)
+		for i in n:
+			var p := G.world.nearest_free(c + Vector2(rng.randf_range(-60, 60), rng.randf_range(-60, 60)))
+			var en := spawn("crawler" if rng.randf() < 0.85 else "skitter", p)
+			en.awake = false
+			placed += 1
 
 
 func damage(e: Enemy, amount: float, by: Mech) -> void:
@@ -225,6 +295,8 @@ func damage(e: Enemy, amount: float, by: Mech) -> void:
 		return
 	var armor: float = e.d.armor
 	var dealt := maxf(amount - armor, amount * 0.2)
+	if not e.awake:
+		wake_around(e.pos, 200.0)
 	e.hp -= dealt
 	e.flash = 1.0
 	if e.hp <= 0.0:
@@ -272,6 +344,8 @@ func _draw() -> void:
 		if e.flash > 0.0:
 			c = c.lerp(Color.WHITE, e.flash)
 		match e.type:
+			"crawler":
+				draw_circle(e.pos, e.r, c if e.awake else c.darkened(0.35))
 			"skitter":
 				draw_circle(e.pos, e.r, c)
 			"spitter":

@@ -8,14 +8,13 @@ var bot_report_t := 0.0
 func _ready() -> void:
 	get_tree().paused = false
 	G.reset()
-	if G.atlas == null:
-		G.atlas = Atlas.new()
 	if G.campaign == null:
 		randomize()
 		var cseed := randi()
 		for a in OS.get_cmdline_user_args():
 			if a.begins_with("--seed="):
 				cseed = int(a.substr(7))
+		G.atlas = Atlas.new(cseed)          # every campaign gets its own region
 		G.campaign = Campaign.new(G.atlas, cseed)
 	var camp: Campaign = G.campaign
 	camp.sync_atlas(G.atlas)
@@ -26,7 +25,7 @@ func _ready() -> void:
 	var to_n: Dictionary = G.atlas.nodes[camp.dest_idx]
 
 	var world := World.new()
-	world.generate(seed_value, from_n.name, to_n.name)
+	world.generate(seed_value, from_n.name, to_n.name, G.atlas.leg_dir(camp.node_idx, camp.dest_idx))
 	add_child(world)
 	G.world = world
 
@@ -65,8 +64,13 @@ func _ready() -> void:
 		else:
 			m.brain = SquadBrain.new(m, d[2])
 
-	var overlay := TacticalOverlay.new()
-	add_child(overlay)
+	var lighting := Lighting.new()
+	add_child(lighting)
+	lighting.setup(world, G.squad)
+	G.lighting = lighting
+	var unshaded := CanvasItemMaterial.new()
+	unshaded.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+	projectiles.material = unshaded          # tracers and blasts glow in the dark
 
 	var cam := GameCamera.new()
 	add_child(cam)
@@ -77,6 +81,7 @@ func _ready() -> void:
 	var director := Director.new()
 	add_child(director)
 	G.director = director
+	director.populate_zone()
 
 	# Satellite-feed filter over the world, HUD crisp on top.
 	var fl := CanvasLayer.new()
@@ -140,13 +145,15 @@ func _process(delta: float) -> void:
 		G.menu.toggle()
 	elif G.menu.open:
 		G.menu.handle_input()
-	if Input.is_action_just_pressed("tactical_toggle"):
-		G.view_mode = (G.view_mode + 1) % 3
+	if Input.is_action_just_pressed("radar_zoom"):
+		G.radar_zoom = (G.radar_zoom + 1) % Hud.RADAR_RANGES.size()
 	if Input.is_action_just_pressed("overworld_toggle"):
 		G.view_mode = 0 if G.view_mode == 2 else 2
 	if G.menu.open:
 		G.view_mode = 0
-	G.tactical = (G.view_mode == 1 or Input.is_action_pressed("tactical")) and not G.menu.open and G.view_mode != 2
+	else:
+		_formation_input()
+	G.tactical = false
 	G.overworld = G.view_mode == 2
 	if G.bot_mode:
 		_bot_screenshots()
@@ -156,6 +163,10 @@ func _process(delta: float) -> void:
 
 	if G.bot_mode:
 		_bot_refit_test()
+		for pair in [[50.0, 1], [65.0, 2], [80.0, 3], [86.0, 0]]:
+			if G.game_time >= pair[0] and G.game_time - delta < pair[0]:
+				set_formation(pair[1])
+				print("[bot] formation -> %s" % G.FORMATIONS[pair[1]])
 		bot_report_t -= delta
 		if bot_report_t <= 0.0:
 			bot_report_t = 10.0
@@ -166,6 +177,26 @@ func _process(delta: float) -> void:
 				G.game_time, Engine.get_frames_per_second(), G.world.progress_of(G.player.position) * 100,
 				G.enemies.alive_count(), Director.PHASE_NAMES[G.director.phase], G.director.intensity,
 				str(G.materials), ", ".join(states)])
+
+
+func _formation_input() -> void:
+	var f := -1
+	if Input.is_action_just_pressed("formation_cycle"):
+		f = (G.formation + 1) % G.FORMATIONS.size()
+	for pair in [["form_follow", 0], ["form_group", 1], ["form_spread", 2], ["form_hold", 3]]:
+		if Input.is_action_just_pressed(pair[0]):
+			f = pair[1]
+	if f >= 0:
+		set_formation(f)
+
+
+func set_formation(f: int) -> void:
+	G.formation = f
+	G.hold_pos = G.player.position
+	G.announce("SQUAD: " + G.FORMATIONS[f], Color(0.6, 0.9, 1.0))
+	var talkers := G.alive_squad().filter(func(x): return x.brain != null and x != G.player)
+	if not talkers.is_empty():
+		talkers[randi() % talkers.size()].brain.bark("form_%d" % f, true)
 
 
 func _arrive() -> void:
@@ -208,12 +239,12 @@ func _bot_screenshots() -> void:
 		_peak_seen_at = G.game_time
 	var t := G.game_time
 	if t > 36.0 and t < 40.0:
-		G.view_mode = 1
+		G.radar_zoom = 2
 	elif t >= 40.0 and t < 44.0:
 		G.view_mode = 2
 	elif t >= 44.0 and t < 44.5:
 		G.view_mode = 0
-	var want := {"01_field": t > 8.0, "02_refit": t > 28.0, "03_tactical": t > 39.5, "05_overworld": t > 43.5,
+	var want := {"01_field": t > 3.0, "02_refit": t > 28.0, "03_radar_far": t > 39.5, "05_overworld": t > 43.5,
 		"04_horde": _peak_seen_at > 0.0 and t > _peak_seen_at + 9.0}
 	for k in want:
 		if want[k] and not _shots_taken.has(k):

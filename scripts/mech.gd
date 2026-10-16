@@ -56,6 +56,7 @@ const DODGE_TIME := 0.32
 const DODGE_IFRAMES := 0.24
 const DODGE_COOLDOWN := 2.0
 const DODGE_HEAT := 10.0
+var _last_flash := -1.0
 var want_dodge := false
 var dodge_t := 0.0
 var dodge_cd := 0.0
@@ -269,6 +270,9 @@ func fire(key: String) -> void:
 		if ws.ammo <= 0:
 			ws.reload_t = ws.reload_total()
 	muzzle_flash = 1.0
+	if G.lighting and G.game_time - _last_flash > 0.15:
+		_last_flash = G.game_time
+		G.lighting.flash(position + aim_dir * 30.0, 120.0, 0.45)
 
 
 func manual_reload() -> void:
@@ -362,6 +366,11 @@ func _draw() -> void:
 		col = col.lerp(Color.WHITE, damage_flash * 0.7)
 	var side := facing.orthogonal()
 	var r := radius
+	# aim cone edges, so you can tell whose light is whose
+	if alive:
+		for sgn in [-1.0, 1.0]:
+			var ed := aim_dir.rotated(Lighting.VIS_HALF * sgn)
+			draw_line(ed * (r + 8.0), ed * 170.0, Color(color, 0.22), 1.0)
 	# dodge afterimages
 	for i in ghosts.size():
 		var gp: Vector2 = ghosts[i] - position

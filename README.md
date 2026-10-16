@@ -13,7 +13,7 @@ weight / power / heat build trade-offs, and by *Left 4 Dead*'s AI director.
 Godot **4.7+** (Compatibility renderer).
 
 ```sh
-./run.sh            # uses ~/bin/godot; override with GODOT=/path/to/godot
+~/bin/godot --path ~/Projects/LastGears
 ```
 
 or open `project.godot` in the editor and press F5.
@@ -24,8 +24,8 @@ or open `project.godot` in the editor and press F5.
 GODOT=~/bin/godot tools/smoke_test.sh
 ```
 
-Clones the committed state fresh (no editor cache), launches it, runs a 2-minute
-simulated playthrough, and fails on any script or engine error.
+Clones the committed state fresh (no editor cache), launches it, runs a simulated
+playthrough and a full station visit, and fails on any script or engine error.
 
 ## Controls
 
@@ -38,8 +38,9 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Weapon 1 (primary hardpoint) | Left click | R1 |
 | Weapon 2 (secondary hardpoint) | Right click | L1 |
 | Dodge roll (brief invulnerability, 2 s cooldown, +heat) | Space / Shift | Circle |
-| Tactical view + corridor map | Q | Hold R2 |
-| Region map (havens, zones, threat) | Q again, or M | Touchpad |
+| Squad formation: follow → group up → spread out → hold | E (cycles) | D-pad → / ↑ / ↓ / ← |
+| Radar range (175 / 350 / 700 m) | Q | R2 |
+| Region map (havens, zones, threat) | M | Touchpad |
 | Pause | Enter | Select/Share |
 | Field refit menu (real time!) | Esc | Start |
 | Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
@@ -67,15 +68,27 @@ travelled. Lose your Vanguard and you can retry the leg from the last station
 
 ## The first leg
 
-Get from **Outpost Gravel** (west) to **Haven-7** (east) through a dead city of
-ruined blocks and rubble plazas. Every run rolls fresh weapons for every mech
-(within each frame's weight limit); frames and role modules stay fixed.
+Every campaign generates its own region (`atlas.gd`, seeded per campaign). Each
+leg's zone is a fresh dead city laid out along the real direction of travel on
+the region map (heading north-west on the map = heading north-west in the zone).
+Every run rolls fresh weapons for every mech (within each frame's weight limit);
+frames and role modules stay fixed.
 
-- **Region map (Q twice).** A persistent network of havens, outposts, machine
-  hives and ruins linked by named zones with threat ratings. The current leg and
-  your squad's live position are highlighted; hover a node for details. It's
-  generated from a fixed seed (`atlas.gd`) so the region is the same every run,
-  ready for multi-leg journeys.
+- **Darkness.** The zones are pitch black. Each mech throws a cone of light where
+  it aims (shadowed by buildings) plus a small hull halo; explosions and muzzle
+  flashes light things up briefly; settlements burn beacons. Machines are only
+  *known* to the squad while inside someone's cone (shared across the squad) or
+  within ~110 px of a hull, so squadmates can be surprised from behind.
+- **Radar (lower left).** Proximity sensor: friendlies and aim lines are live,
+  hostile blips refresh only as the sweep passes and fade between sweeps. Rim
+  marker points to the destination. Q cycles range.
+- **Formations (E / D-pad).** Follow (default slots), Group up (tight, shorter
+  leash, no scavenging), Spread out (wide arc, longer leash), Hold (stay where
+  the order was given). When idle, squadmates scan the arcs you aren't looking
+  at: Rook your right, Wren your left, Mags your rear.
+- **Region map (M).** Havens, outposts, machine hives and ruins linked by named
+  zones with threat ratings. Current leg and live squad position highlighted;
+  hover a node for details.
 
 - **Squad of four.** You pilot VANGUARD. ROOK (brawler, Bulwark heavy frame), WREN
   (marksman, Kestrel light frame) and MAGS (medic, Sparrow support frame) run on a
@@ -99,11 +112,14 @@ ruined blocks and rubble plazas. Every run rolls fresh weapons for every mech
   with Wardens) → back to RELAX once the area is actually clear. Intensity rises
   with damage taken and nearby enemies; difficulty scales with how far east you
   are. The top-right readout (F3) shows what it's doing, for tuning.
-- **Enemies are dots.** Rendered in bulk like *Mech Engineer*'s swarms, mechs a bit
-  bigger and readable. Four types:
-  - **Skitter** (red dot): fast, fragile melee swarm.
+- **Enemies are dots, and there are a lot of them.** Hundreds per zone: dormant
+  crawler fields scattered through the city (they wake when you get close or
+  shoot them), plus much bigger director packs and hordes. All weapons hit ~2.2×
+  harder with bigger magazines to cope. Five types:
+  - **Crawler** (dull red dot): the bulk of the swarm. Slow, fragile, endless.
+  - **Skitter** (red dot): medium-pace biter.
   - **Spitter** (orange ring): keeps range, strafes, fires slow bolts.
-  - **Tick** (blinking yellow): suicide runner, explodes on contact *or death*,
+  - **Tick** (blinking yellow): rare, fast suicide runner, explodes on contact *or death*,
     chains, and hurts everyone, including other machines.
   - **Warden** (magenta diamond): armoured brute (−5 per hit, so gatling/flamer
     struggle; autocannon/rockets/mortar crack it). Drops good salvage.
@@ -127,7 +143,7 @@ scripts/
   station_menu.gd       station screen: hangar, market, repairs, depart
   field_menu.gd         real-time refit UI
   hud.gd                HUD, tactical corridor map, end screen
-  tactical_overlay.gd   world-space markers in tactical view
+  lighting.gd           darkness, mech light cones + shadows, flashes, vision-cone maths
   game_camera.gd        follow, aim look-ahead, tactical zoom, shake
 shaders/satellite.gdshader   grain / scanline / tint "satellite feed" filter
 ```

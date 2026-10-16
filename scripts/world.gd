@@ -5,8 +5,11 @@ extends Node2D
 ## (A* for the squad, a BFS flow field for the swarm).
 
 const CELL := 24
-const W := 300
-const H := 96
+var W := 230
+var H := 100
+var dir := Vector2.RIGHT              # travel direction (matches the region map)
+var start_c := Vector2.ZERO           # px, centre of departure compound
+var goal_c := Vector2.ZERO            # px, centre of destination compound
 
 var blocked := PackedByteArray()      # 1 = solid (building / wall / border)
 var buildings: Array = []             # Array[Rect2i] in cells
@@ -35,10 +38,19 @@ var from_name := "Outpost Gravel"
 var to_name := "Haven-7"
 
 
-func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String = "Haven-7") -> void:
+func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String = "Haven-7", p_dir: Vector2 = Vector2.RIGHT) -> void:
 	from_name = p_from
 	to_name = p_to
 	rng.seed = seed_value
+	dir = p_dir.normalized() if p_dir.length() > 0.01 else Vector2.RIGHT
+	# A corridor ~230 cells long, ~100 wide, rotated to the travel direction;
+	# the map is its bounding box (diagonal legs get a squarer, bigger city).
+	var L := 230.0
+	var Wd := 100.0
+	var c := absf(dir.x)
+	var sn := absf(dir.y)
+	W = maxi(110, int(L * c + Wd * sn))
+	H = maxi(110, int(L * sn + Wd * c))
 	blocked.resize(W * H)
 	blocked.fill(0)
 	buildings.clear()
@@ -50,24 +62,38 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 		_set_solid(0, y)
 		_set_solid(W - 1, y)
 
-	# Settlements: walled compounds with gates.
-	var sa := Rect2i(3, 39, 13, 18)
-	var sb := Rect2i(W - 16, 39, 13, 18)
-	_compound(sa, true)
-	_compound(sb, false)
+	# Settlements: walled compounds, gates facing each other.
+	var mid := Vector2(W, H) * 0.5
+	var half := Vector2(maxf(W * 0.5 - 12.0, 10.0), maxf(H * 0.5 - 12.0, 10.0))
+	var t := INF
+	if absf(dir.x) > 0.001:
+		t = minf(t, half.x / absf(dir.x))
+	if absf(dir.y) > 0.001:
+		t = minf(t, half.y / absf(dir.y))
+	var a_cell := mid - dir * t
+	var b_cell := mid + dir * t
+	var gate_a := _side_of(dir)
+	var gate_b := _side_of(-dir)
+	var sa := _compound_rect(a_cell, gate_a)
+	var sb := _compound_rect(b_cell, gate_b)
+	_compound(sa, gate_a)
+	_compound(sb, gate_b)
 	start_zone = Rect2(Vector2(sa.position + Vector2i(1, 1)) * CELL, Vector2(sa.size - Vector2i(2, 2)) * CELL)
 	goal_zone = Rect2(Vector2(sb.position + Vector2i(1, 1)) * CELL, Vector2(sb.size - Vector2i(2, 2)) * CELL)
-	start_pos = start_zone.get_center() + Vector2(CELL * 2, 0)
+	start_c = start_zone.get_center()
+	goal_c = goal_zone.get_center()
+	start_pos = start_c + Vector2(gate_a) * CELL * 2.0
+	var area := W * H
 
 	# Plazas: open squares/rubble fields so the city isn't wall-to-wall blocks.
 	plazas.clear()
-	for i in 14:
-		var c := Vector2(rng.randf_range(22, W - 22), rng.randf_range(10, H - 10)) * CELL
-		plazas.append([c, rng.randf_range(4.0, 8.5) * CELL])
+	for i in area / 2000:
+		var pc := Vector2(rng.randf_range(12, W - 12), rng.randf_range(12, H - 12)) * CELL
+		plazas.append([pc, rng.randf_range(4.0, 8.5) * CELL])
 
 	# Buildings: random rects with a 2-cell gutter so heavy mechs fit between.
 	var tries := 0
-	while tries < 3200 and buildings.size() < 330:
+	while tries < area / 7 and buildings.size() < area / 85:
 		tries += 1
 		var bw := rng.randi_range(2, 7)
 		var bh := rng.randi_range(2, 6)
@@ -82,11 +108,11 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 
 	# Ground dressing.
 	specks.clear()
-	for i in 9000:
+	for i in int(area * 0.3):
 		specks.append([Vector2(rng.randf() * W * CELL, rng.randf() * H * CELL),
 			rng.randf_range(1.0, 3.5), rng.randf_range(-0.05, 0.06)])
 	craters.clear()
-	for i in 190:
+	for i in area / 150:
 		var p := Vector2(rng.randf() * W * CELL, rng.randf() * H * CELL)
 		if not is_solid_at(p):
 			craters.append([p, rng.randf_range(10, 40)])
@@ -94,11 +120,11 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 	# Cache spots: free cells away from the start, biased toward building edges.
 	cache_spots.clear()
 	tries = 0
-	while cache_spots.size() < 60 and tries < 9000:
+	while cache_spots.size() < area / 450 and tries < 12000:
 		tries += 1
-		var cx := rng.randi_range(18, W - 18)
+		var cx := rng.randi_range(4, W - 5)
 		var cy := rng.randi_range(4, H - 5)
-		if is_solid(cx, cy):
+		if is_solid(cx, cy) or cell_center(Vector2i(cx, cy)).distance_to(start_c) < 18 * CELL:
 			continue
 		var adj := is_solid(cx + 1, cy) or is_solid(cx - 1, cy) or is_solid(cx, cy + 1) or is_solid(cx, cy - 1)
 		if not adj and rng.randf() < 0.75:
@@ -117,16 +143,34 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 	queue_redraw()
 
 
-func _compound(r: Rect2i, gate_east: bool) -> void:
-	var cy := r.get_center().y
+func _side_of(d: Vector2) -> Vector2i:
+	if absf(d.x) >= absf(d.y):
+		return Vector2i(1 if d.x > 0 else -1, 0)
+	return Vector2i(0, 1 if d.y > 0 else -1)
+
+
+func _compound_rect(center: Vector2, gate: Vector2i) -> Rect2i:
+	var sz := Vector2i(13, 18) if gate.x != 0 else Vector2i(18, 13)
+	var p := Vector2i(int(center.x) - sz.x / 2, int(center.y) - sz.y / 2)
+	p.x = clampi(p.x, 2, W - sz.x - 2)
+	p.y = clampi(p.y, 2, H - sz.y - 2)
+	return Rect2i(p, sz)
+
+
+func _compound(r: Rect2i, gate: Vector2i) -> void:
+	var cc := r.get_center()
 	for x in range(r.position.x, r.end.x):
-		for yy in [r.position.y, r.end.y - 1]:
-			_set_solid(x, yy)
-	for yy in range(r.position.y, r.end.y):
-		for x in [r.position.x, r.end.x - 1]:
-			var is_gate: bool = absi(yy - cy) <= 1 and ((x == r.end.x - 1) == gate_east)
+		for y in range(r.position.y, r.end.y):
+			var edge := x == r.position.x or x == r.end.x - 1 or y == r.position.y or y == r.end.y - 1
+			if not edge:
+				continue
+			var is_gate := false
+			if gate.x != 0:
+				is_gate = absi(y - cc.y) <= 1 and x == (r.end.x - 1 if gate.x > 0 else r.position.x)
+			else:
+				is_gate = absi(x - cc.x) <= 1 and y == (r.end.y - 1 if gate.y > 0 else r.position.y)
 			if not is_gate:
-				_set_solid(x, yy)
+				_set_solid(x, y)
 	walls.append(r)
 
 
@@ -236,7 +280,14 @@ func size_px() -> Vector2:
 
 
 func progress_of(p: Vector2) -> float:
-	return clampf((p.x - start_zone.end.x) / (goal_zone.position.x - start_zone.end.x), 0.0, 1.0)
+	var v := goal_c - start_c
+	return clampf((p - start_c).dot(v) / v.length_squared(), 0.0, 1.0)
+
+
+func compass(v: Vector2) -> String:
+	## Screen/map up is north.
+	var names := ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"]
+	return names[int(round(fposmod(v.angle(), TAU) / (TAU / 8.0))) % 8]
 
 
 # ---------------------------------------------------------------- A* (squad)

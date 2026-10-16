@@ -15,7 +15,7 @@ const SQUAD_DEF := [
 const RECRUITS := ["Teo Marsh", "Ana Petrak", "Joss Imani", "Kit Varga", "Rune Calder", "Oyelaran", "Nell Szabo", "Duc Pham"]
 
 # kill bounties paid by havens on arrival
-const BOUNTY := {"skitter": 1, "spitter": 2, "tick": 2, "warden": 15}
+const BOUNTY := {"crawler": 0.2, "skitter": 0.5, "spitter": 1.5, "tick": 1.5, "warden": 12.0}
 
 var node_idx := 0                 # where we are (or departed from)
 var dest_idx := 0                 # where this leg goes
@@ -123,10 +123,10 @@ func arrive(atlas: Atlas, mechs: Array, mats: Dictionary, leg_kills: Dictionary)
 	store_squad(mechs)
 	materials = mats.duplicate()
 	var t := threat(atlas)
-	var bounty := 0
+	var bf := 0.0
 	for k in leg_kills:
-		bounty += int(BOUNTY.get(k, 1)) * int(leg_kills[k])
-	bounty = int(bounty * 0.5)
+		bf += float(BOUNTY.get(k, 0.5)) * int(leg_kills[k])
+	var bounty := int(bf)
 	var delivery := 50 + t * 35
 	credits += bounty + delivery
 	node_idx = dest_idx

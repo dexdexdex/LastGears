@@ -25,9 +25,88 @@ func _ready() -> void:
 		banner_t = 3.5)
 
 
+const RADAR_RANGES := [700.0, 1400.0, 2800.0]   # px; Q / R2 cycles
+const RADAR_PERIOD := 2.4                        # seconds per sweep
+const RADAR_R := 112.0
+var sweep := 0.0
+var blips := {}          # Enemy -> [pos, time seen, is_big]
+
+
 func _process(delta: float) -> void:
 	banner_t = maxf(0.0, banner_t - delta)
+	if not get_tree().paused and G.game_state == "play":
+		_radar_update(delta)
 	queue_redraw()
+
+
+func _radar_update(delta: float) -> void:
+	## Proximity sensor: hostile positions only refresh as the sweep passes.
+	if G.player == null or G.enemies == null:
+		return
+	var prev := sweep
+	sweep = fposmod(sweep + TAU / RADAR_PERIOD * delta, TAU)
+	var rng: float = RADAR_RANGES[G.radar_zoom]
+	var c := G.player.position
+	for e in G.enemies.list:
+		var v: Vector2 = e.pos - c
+		if v.length_squared() > rng * rng:
+			continue
+		var a := fposmod(v.angle(), TAU)
+		var hit := (a > prev and a <= sweep) if sweep >= prev else (a > prev or a <= sweep)
+		if hit:
+			blips[e] = [e.pos, G.game_time, e.type == "warden"]
+	for e in blips.keys():
+		if not e.alive or G.game_time - blips[e][1] > RADAR_PERIOD * 1.05:
+			blips.erase(e)
+
+
+func _draw_radar(vs: Vector2) -> void:
+	var c := Vector2(20 + RADAR_R, vs.y - 40 - RADAR_R)
+	var R := RADAR_R
+	var rng: float = RADAR_RANGES[G.radar_zoom]
+	var k := R / rng
+	var pc := G.player.position
+	var green := Color(0.45, 1.0, 0.6)
+	draw_circle(c, R + 6, Color(0, 0, 0, 0.6))
+	draw_circle(c, R, Color(0.02, 0.07, 0.045, 0.92))
+	for f in [1.0 / 3.0, 2.0 / 3.0, 1.0]:
+		draw_arc(c, R * f, 0, TAU, 48, Color(green, 0.18 if f < 1.0 else 0.45), 1.0)
+	draw_line(c - Vector2(R, 0), c + Vector2(R, 0), Color(green, 0.1), 1.0)
+	draw_line(c - Vector2(0, R), c + Vector2(0, R), Color(green, 0.1), 1.0)
+	# sweep wedge
+	for i in 28:
+		var a := sweep - i * 0.025
+		draw_line(c, c + Vector2.from_angle(a) * R, Color(green, 0.32 * (1.0 - i / 28.0)), 2.0)
+	# hostile blips (stale positions, fading until the sweep comes round again)
+	for e in blips:
+		var b: Array = blips[e]
+		var v: Vector2 = (b[0] - pc) * k
+		if v.length() > R:
+			continue
+		var age := clampf((G.game_time - b[1]) / RADAR_PERIOD, 0.0, 1.0)
+		var col := Color(1, 0.3, 0.25, 1.0 - age * 0.85)
+		draw_circle(c + v, 3.5 if b[2] else 1.8, col)
+	# destination
+	var gv := (G.world.goal_c - pc) * k
+	var gcol := Color(1, 0.82, 0.4)
+	if gv.length() < R - 6:
+		draw_rect(Rect2(c + gv - Vector2(4, 4), Vector2(8, 8)), gcol, false, 1.5)
+	else:
+		var gd := gv.normalized()
+		var tip := c + gd * (R + 2)
+		draw_colored_polygon(PackedVector2Array([tip + gd * 8, tip + gd.orthogonal() * 5, tip - gd.orthogonal() * 5]), gcol)
+	# squad (live) with aim ticks
+	for m in G.squad:
+		if not m.alive:
+			continue
+		var v2: Vector2 = (m.position - pc) * k
+		if v2.length() > R:
+			v2 = v2.normalized() * R
+		draw_line(c + v2, c + v2 + m.aim_dir * 10.0, Color(m.color, 0.8), 1.5)
+		draw_circle(c + v2, 3.5 if m.is_player else 3.0, m.color)
+	var rm := int(rng * 0.25)
+	_txt(Vector2(c.x - R, c.y - R - 8), "RADAR · %d m · Q" % rm, 10, C_DIM)
+	_txt(Vector2(c.x + R - 70, c.y - R - 8), "%d contacts" % blips.size(), 10, Color(1, 0.4, 0.3, 0.9))
 
 
 func _txt(p: Vector2, s: String, size: int = 13, col: Color = C_TEXT, align := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
@@ -54,14 +133,13 @@ func _draw() -> void:
 	_draw_materials(vs)
 	_draw_squad(vs)
 	_draw_player(vs)
+	_draw_radar(vs)
 	_draw_radio(vs)
 	_draw_director(vs)
-	if G.tactical or (G.camera and G.camera.tac_blend > 0.05):
-		_draw_map(vs)
 	_draw_objective(vs)
 	if G.overworld:
 		_draw_overworld(vs)
-	_txt(Vector2(16, vs.y - 10), "WASD move · mouse aim · LMB/RMB weapons · Space dodge · Q tactical, Q again region map · Esc refit · Enter pause · F11 · F5 restart     (pad: sticks · R1/L1 · ○ dodge · hold R2 · touchpad map · START)", 11, C_DIM)
+	_txt(Vector2(16, vs.y - 10), "WASD move · mouse aim · LMB/RMB weapons · Space dodge · E squad formation · Q radar range · M region map · Esc refit · Enter pause · F5 restart     (pad: sticks · R1/L1 · ○ dodge · D-pad formations · R2 radar · touchpad map · START)", 11, C_DIM)
 	if banner_t > 0.0:
 		var a := clampf(banner_t, 0, 1)
 		var y := vs.y * 0.3
@@ -112,11 +190,12 @@ func _draw_squad(_vs: Vector2) -> void:
 		else:
 			_txt(r.position + Vector2(12, 40), "SIGNAL LOST", 13, C_WARN)
 		y += 58
+	_txt(Vector2(16, y + 14), "FORMATION  %s   (E / D-pad)" % G.FORMATIONS[G.formation], 12, Color(0.6, 0.9, 1.0))
 
 
 func _draw_player(vs: Vector2) -> void:
 	var m := G.player
-	var r := Rect2(12, vs.y - 168, 420, 140)
+	var r := Rect2(20 + RADAR_R * 2 + 16, vs.y - 168, 420, 140)
 	_panel(r)
 	var x := r.position.x + 12
 	var y := r.position.y + 18
@@ -209,7 +288,7 @@ func _draw_objective(vs: Vector2) -> void:
 	var goal := G.world.goal_zone.get_center()
 	var dist_km := p.position.distance_to(goal) / 24.0 * 6.0 / 1000.0   # 1 cell ≈ 6 m
 	var r := Rect2(vs.x * 0.5 - 200, 46, 400, 22)
-	_txt(Vector2(r.position.x, r.position.y + 14), "OBJECTIVE  Reach %s  ·  %.2f km east  ·  %d cr" % [G.world.to_name.to_upper(), dist_km, G.campaign.credits], 12, C_AMBER, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	_txt(Vector2(r.position.x, r.position.y + 14), "OBJECTIVE  Reach %s  ·  %.2f km %s  ·  %d cr" % [G.world.to_name.to_upper(), dist_km, G.world.compass(goal - p.position), G.campaign.credits], 12, C_AMBER, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 	# off-screen arrow
 	var view := G.camera.view_rect()
 	if not view.has_point(goal):

@@ -24,7 +24,12 @@ var game_time := 0.0
 var kills := 0
 var using_mouse := false
 var tactical := false
-var view_mode := 0              # Q cycles: 0 field, 1 tactical, 2 overworld
+var view_mode := 0              # 0 field, 2 region map (M / touchpad)
+var lighting: Lighting
+var radar_zoom := 1             # index into Hud.RADAR_RANGES (Q / R2 cycles)
+const FORMATIONS := ["FOLLOW", "GROUP UP", "SPREAD OUT", "HOLD"]
+var formation := 0
+var hold_pos := Vector2.ZERO
 var overworld := false
 var atlas: Atlas                # regional network of havens and zones (persists across restarts)
 var menu_closed_t := -99.0
@@ -58,6 +63,7 @@ func reset() -> void:
 	tactical = false
 	view_mode = 0
 	overworld = false
+	formation = 0
 	menu_closed_t = -99.0
 	game_state = "play"
 
@@ -161,8 +167,13 @@ func _setup_input() -> void:
 	_mouse("fire_primary", MOUSE_BUTTON_LEFT)
 	_button("fire_secondary", [JOY_BUTTON_LEFT_SHOULDER])    # L1
 	_mouse("fire_secondary", MOUSE_BUTTON_RIGHT)
-	_axis("tactical", JOY_AXIS_TRIGGER_RIGHT, 1.0)           # R2
-	_key("tactical_toggle", [KEY_Q])                         # Q cycles field/tactical/overworld
+	_axis("radar_zoom", JOY_AXIS_TRIGGER_RIGHT, 1.0)         # R2
+	_key("radar_zoom", [KEY_Q])
+	_key("formation_cycle", [KEY_E])
+	_button("form_group", [JOY_BUTTON_DPAD_UP])
+	_button("form_spread", [JOY_BUTTON_DPAD_DOWN])
+	_button("form_hold", [JOY_BUTTON_DPAD_LEFT])
+	_button("form_follow", [JOY_BUTTON_DPAD_RIGHT])
 	_key("overworld_toggle", [KEY_M])
 	_button("overworld_toggle", [JOY_BUTTON_TOUCHPAD])
 	_key("dodge", [KEY_SPACE, KEY_SHIFT])
