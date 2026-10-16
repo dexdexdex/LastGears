@@ -1,5 +1,7 @@
-# Godot 4
-.godot/
+# Godot 4: ignore the editor cache, except the global class list, which a
+# fresh checkout needs to run without opening the editor first.
+.godot/*
+!.godot/global_script_class_cache.cfg
 *.import
 export_presets.cfg
 *.tmp

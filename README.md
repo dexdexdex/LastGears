@@ -10,13 +10,22 @@ weight / power / heat build trade-offs, and by *Left 4 Dead*'s AI director.
 
 ## Running
 
-Godot **4.4+** (Compatibility renderer).
+Godot **4.7+** (Compatibility renderer).
 
 ```sh
-godot --path /path/to/LastGears
+./run.sh            # uses ~/bin/godot; override with GODOT=/path/to/godot
 ```
 
 or open `project.godot` in the editor and press F5.
+
+## Before pushing
+
+```sh
+GODOT=~/bin/godot tools/smoke_test.sh
+```
+
+Clones the committed state fresh (no editor cache), launches it, runs a 2-minute
+simulated playthrough, and fails on any script or engine error.
 
 ## Controls
 
