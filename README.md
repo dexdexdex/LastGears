@@ -165,6 +165,13 @@ enemies, shots and pickups only draw on screen. Darkness doesn't use Light2D:
 cones are ray-cast against the grid and painted once into a half-resolution
 light map that the post shader multiplies in. F1 shows the per-system cost.
 
+While you play, a `[perf]` line goes to the terminal (and is appended to
+`perf.log` in the project folder, git-ignored) every 5 s, and every second
+whenever FPS drops below 100 with machines awake: FPS, average and worst frame
+time, enemy counts, director phase, render mode, the five most expensive
+systems and draw calls. Each session starts with a header naming the GPU,
+screen size and refresh rate.
+
 ## Automated playtest
 
 An AI can drive the player for smoke tests and pacing checks:

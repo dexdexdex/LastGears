@@ -53,6 +53,59 @@ var prof_avg := {}       # name -> ms per frame (last second)
 var prof_frames := 0
 var prof_t := 0.0
 var fps_ms := 0.0        # average frame time over last second
+var worst_ms := 0.0      # slowest single frame in the last second
+var _worst_acc := 0.0
+var _perf_t := 0.0
+var _perf_file: FileAccess
+const PERF_EVERY := 5.0  # seconds between routine log lines
+const PERF_DIP := 100    # log extra lines (every 1 s) when fps drops below this in a fight
+
+
+func _perf_tick() -> void:
+	## Called once a second. Logs FPS to the console and to perf.log in the
+	## project folder: every PERF_EVERY s, and every second during a dip.
+	if bot_mode or game_state != "play" or get_tree().paused or enemies == null:
+		return
+	_perf_t += 1.0
+	var fps := Engine.get_frames_per_second()
+	var awake := enemies.count_awake()
+	var dip := fps < PERF_DIP and awake > 40
+	if _perf_t < PERF_EVERY and not dip:
+		return
+	_perf_t = 0.0
+	var keys: Array = prof_avg.keys().filter(func(k): return not k.begins_with(" "))
+	keys.sort_custom(func(a, b): return prof_avg[a] > prof_avg[b])
+	var top: Array = []
+	var total := 0.0
+	for k in prof_avg:
+		if not k.begins_with(" "):
+			total += prof_avg[k]
+	for k in keys.slice(0, 5):
+		top.append("%s %.2f" % [k, prof_avg[k]])
+	var phase: String = Director.PHASE_NAMES[director.phase] if director else "-"
+	var line := "[perf]%s t=%4.0fs fps=%3d avg=%5.2fms worst=%5.1fms | enemies %d (awake %d) shots %d | %s %s | scripts %.2fms: %s | draws %d" % [
+		" DIP" if dip else "", game_time, fps, fps_ms, worst_ms,
+		enemies.alive_count(), awake, projectiles.shots.size() if projectiles else 0,
+		phase, "fast" if render_fast else "sharp", total, ", ".join(top),
+		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))]
+	print(line)
+	_perf_write(line)
+
+
+func _perf_write(line: String) -> void:
+	if _perf_file == null:
+		var path := ProjectSettings.globalize_path("res://perf.log")
+		_perf_file = FileAccess.open(path, FileAccess.READ_WRITE if FileAccess.file_exists(path) else FileAccess.WRITE)
+		if _perf_file == null:
+			return
+		_perf_file.seek_end()
+		var scr := DisplayServer.window_get_current_screen()
+		_perf_file.store_line("\n=== session %s · %s · %s · GPU %s · screen %s @ %.0f Hz · window %s ===" % [
+			Time.get_datetime_string_from_system(), OS.get_name(), Engine.get_version_info().string,
+			RenderingServer.get_video_adapter_name(), str(DisplayServer.screen_get_size(scr)),
+			DisplayServer.screen_get_refresh_rate(scr), str(get_viewport().get_visible_rect().size)])
+	_perf_file.store_line(line)
+	_perf_file.flush()
 
 
 func pe(name: String, t0: int) -> void:
@@ -93,14 +146,18 @@ func reset() -> void:
 func _process(delta: float) -> void:
 	prof_frames += 1
 	prof_t += delta
+	_worst_acc = maxf(_worst_acc, delta * 1000.0)
 	if prof_t >= 1.0:
 		prof_avg = {}
 		for k in prof:
 			prof_avg[k] = prof[k] / 1000.0 / prof_frames
 		fps_ms = prof_t * 1000.0 / prof_frames
+		worst_ms = _worst_acc
+		_worst_acc = 0.0
 		prof.clear()
 		prof_frames = 0
 		prof_t = 0.0
+		_perf_tick()
 	if Input.is_action_just_pressed("toggle_profiler"):
 		show_profiler = not show_profiler
 	if Input.is_action_just_pressed("toggle_render"):

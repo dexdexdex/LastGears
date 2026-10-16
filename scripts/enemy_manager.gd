@@ -401,6 +401,14 @@ func kill(e: Enemy, by: Mech) -> void:
 		G.pickups.add_salvage(e.pos, loot)
 
 
+func count_awake() -> int:
+	var n := 0
+	for e in list:
+		if e.alive and e.awake:
+			n += 1
+	return n
+
+
 func alive_count() -> int:
 	return list.size()
 

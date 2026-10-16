@@ -6,3 +6,4 @@
 export_presets.cfg
 *.tmp
 .DS_Store
+perf.log
