@@ -52,8 +52,8 @@ class Enemy:
 	var wander := Vector2.ZERO
 	var want := Vector2.ZERO   # desired velocity, set by the (time-sliced) think step
 	var mdt := 0.0             # off-screen: movement time banked for the next step
-	var skip := 0              # LOD: far machines skip think slots...
-	var acc := 0.0             # ...and get the skipped time when they do think
+	var next_think := 0.0      # game time of the next decision (sooner the closer it is)
+	var last_think := 0.0
 	var seen := false          # inside some squad mech's vision cone right now
 	var seen_t := -99.0
 	var bi := -1               # bucket this machine is filed in (-1 = none)
@@ -71,7 +71,16 @@ var on_list: Array = []    # awake machines on screen this frame (filled by the 
 var _seen_sl: Array = []
 var wake_t := 0.0
 const BUCKET := 48.0
-const THINK_HZ := 10.0     # slice rate; distance LOD below thins it to ~1x/s far away
+const THINK_HZ := 10.0     # slice rate (off-screen movement steps + think checks)
+# Think interval grows with distance to the nearest mech: 0.1 s up close,
+# 1 s at 1100 px and beyond. Far machines just trudge toward the squad on
+# their last decision and get sharper as they close in.
+const THINK_MIN := 0.1
+const THINK_MAX := 1.0
+const THINK_FAR := 1100.0
+var thinks_frame := 0      # stats: decisions made last frame
+var budget_hits := 0       # stats: frames where the budget ran out
+var budget_used_ms := 0.0
 var bw := 0
 var bh := 0
 var grid: Array = []       # flat bucket grid of Arrays
@@ -94,6 +103,7 @@ func spawn(type: String, pos: Vector2) -> Enemy:
 	e.strafe = 1.0 if randf() < 0.5 else -1.0
 	e.t = randf() * 10.0
 	e.los_t = randf() * 0.4
+	e.last_think = G.game_time
 	list.append(e)
 	return e
 
@@ -149,24 +159,39 @@ func _process_body(delta: float) -> void:
 	var n := list.size()
 	var tt := Time.get_ticks_usec()
 	var onscreen := G.camera.view_rect().grow(120.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
-	# Pass 1, the slice: 1/k of the swarm re-decides, and the off-screen ones
-	# among it also take their (k-frame) step now. Off screen nobody sees
-	# 20 Hz motion, and each machine costs one visit per slice, not per frame.
+	# Thinking runs on a hard per-frame time budget (G.think_budget_ms).
+	# Nearest first: machines on screen (around the squad) that are due get
+	# their turn before anyone else; then the slice. Whoever misses out keeps
+	# walking on its last decision and is simply a little slower to react.
+	var now := G.game_time
+	var t_end := tt + int(G.think_budget_ms * 1000.0)
+	var over := false
+	var cnt := 0
+	for e in on_list:
+		if e.alive and now >= e.next_think:
+			_think_now(e, now, alive_mechs)
+			cnt += 1
+			if (cnt & 7) == 0 and Time.get_ticks_usec() > t_end:
+				over = true
+				break
+	# The slice: 1/k of the swarm is visited each frame. Due machines think
+	# (budget permitting); off-screen ones take their k-frame movement step.
 	for i in range(think_slice, n, k):
 		var e: Enemy = list[i]
 		if not e.alive:
 			continue
-		e.acc += think_dt
-		if e.skip > 0:
-			e.skip -= 1
-		else:
-			var dt := e.acc
-			e.acc = 0.0
-			_think(e, dt, alive_mechs)
+		if not over and now >= e.next_think:
+			_think_now(e, now, alive_mechs)
+			cnt += 1
+			if (cnt & 7) == 0 and Time.get_ticks_usec() > t_end:
+				over = true
 			if not e.alive:
 				continue
 		if not onscreen.has_point(e.pos):
 			_move(e, think_dt)
+	thinks_frame = cnt
+	if over:
+		budget_hits += 1
 	G.pe(" · pass1", tt)
 	var t2 := Time.get_ticks_usec()
 	# Pass 2: what's on screen moves every frame (found through the buckets).
@@ -235,6 +260,13 @@ func _move(e: Enemy, delta: float) -> void:
 		e.pos += step
 
 
+func _think_now(e: Enemy, now: float, mechs: Array) -> void:
+	var dt := clampf(now - e.last_think, 0.0, 1.5)
+	e.last_think = now
+	e.next_think = now + THINK_MAX     # _think shortens this by distance
+	_think(e, dt, mechs)
+
+
 func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	e.t += delta
 	e.cd -= delta
@@ -264,13 +296,7 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	var to_t := best.position - e.pos
 	var dist := sqrt(bd)
 	# Distance LOD: only machines about to touch a mech need quick reflexes.
-	# The rest keep walking on their last decision (and still move smoothly).
-	if dist > 1100.0:
-		e.skip = 9          # far: re-decide ~1x/s
-	elif dist > 500.0:
-		e.skip = 3          # mid: ~2.5x/s
-	elif dist > 200.0:
-		e.skip = 1          # near: ~5x/s
+	e.next_think = e.last_think + clampf(dist / THINK_FAR, THINK_MIN, THINK_MAX) * randf_range(0.9, 1.1)
 	e.los_t -= delta
 	if e.los_t <= 0.0:
 		e.los_t = 0.35

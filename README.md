@@ -168,8 +168,12 @@ Balancing lives almost entirely in `parts_db.gd`, `enemy_manager.gd` (`TYPES`) a
 ## Performance notes
 
 Built for 120 Hz. The swarm is level-of-detail all the way down: machines
-re-decide on a distance schedule (up close ~10×/s, far away ~1×/s) and keep
-walking on their last decision in between; off-screen machines only step when
+re-decide more often the closer they are to a mech (every 0.1 s up close,
+once a second from 1100 px out) and keep walking on their last decision in
+between. Thinking also runs on a hard per-frame time budget (1.2 ms by default,
+nearest machines first; set `think_budget_ms` under `[perf]` in Godot's
+`user://settings.cfg`, or pass `-- --think-budget=0.8`): when it runs out, the
+rest just react a little later instead of costing a frame; off-screen machines only step when
 their time slice comes round (10 Hz); on-screen ones step smoothly (every other
 frame above 90 fps, which is sub-pixel); the spatial grid updates incrementally
 at 30 Hz; the flow field's downhill direction is cached per cell; radar, vision

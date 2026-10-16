@@ -40,6 +40,7 @@ var show_profiler := false
 # Render at the 1600x900 base resolution and scale up (fast), or at the
 # display's native resolution (sharp; Retina = ~4x the pixels to light).
 var render_fast := true
+var think_budget_ms := 1.2  # swarm AI time per frame; [perf] think_budget_ms in user://settings.cfg
 var god := false           # --stress: squad takes no damage
 var mech_style := 4          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
 const SETTINGS := "user://settings.cfg"
@@ -49,7 +50,10 @@ func load_settings() -> void:
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) == OK:
 		mech_style = int(cf.get_value("look", "mech_style_v2", 4))
+		think_budget_ms = float(cf.get_value("perf", "think_budget_ms", think_budget_ms))
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--think-budget="):
+			think_budget_ms = float(a.substr(15))
 		if a.begins_with("--mech-style="):
 			mech_style = int(a.substr(13))
 	mech_style = clampi(mech_style, 0, Mech.STYLE_NAMES.size() - 1)
@@ -103,9 +107,9 @@ func _perf_tick() -> void:
 	for k in keys.slice(0, 5):
 		top.append("%s %.2f" % [k, prof_avg[k]])
 	var phase: String = Director.PHASE_NAMES[director.phase] if director else "-"
-	var line := "[perf]%s t=%4.0fs fps=%3d avg=%5.2fms worst=%5.1fms | enemies %d (awake %d) shots %d | %s %s | scripts %.2fms: %s | draws %d" % [
+	var line := "[perf]%s t=%4.0fs fps=%3d avg=%5.2fms worst=%5.1fms | enemies %d (awake %d, %d thinks/frame, budget hit %d) shots %d | %s %s | scripts %.2fms: %s | draws %d" % [
 		" DIP" if dip else "", game_time, fps, fps_ms, worst_ms,
-		enemies.alive_count(), awake, projectiles.shots.size() if projectiles else 0,
+		enemies.alive_count(), awake, enemies.thinks_frame, enemies.budget_hits, projectiles.shots.size() if projectiles else 0,
 		phase, "fast" if render_fast else "sharp", total, ", ".join(top),
 		int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))]
 	print(line)
