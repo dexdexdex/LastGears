@@ -1,0 +1,190 @@
+extends Node
+## Global game state + input setup. Autoloaded as `G`.
+
+signal radio_msg(text: String, color: Color)
+signal banner(text: String, color: Color)
+
+var world: World
+var enemies: EnemyManager
+var projectiles: ProjectileManager
+var pickups: Pickups
+var director: Director
+var camera: GameCamera
+var hud: Hud
+var menu: FieldMenu
+var player: Mech
+var squad: Array = []          # all mechs incl. player
+var materials := {"scrap": 24, "circuits": 8, "cells": 5}
+var radio: Array = []          # [{text, color, t}]
+var game_time := 0.0
+var kills := 0
+var using_mouse := false
+var tactical := false
+var game_state := "play"       # play | won | lost
+var bot_mode := false          # --bot : AI drives the player (for automated tests)
+var show_director := true
+
+const MATERIAL_NAMES := {"scrap": "SCRAP", "circuits": "CIRCUITS", "cells": "CELLS"}
+const MATERIAL_COLORS := {
+	"scrap": Color(0.78, 0.72, 0.62),
+	"circuits": Color(0.45, 0.85, 0.6),
+	"cells": Color(0.45, 0.75, 1.0),
+}
+
+
+func _ready() -> void:
+	_setup_input()
+	bot_mode = "--bot" in OS.get_cmdline_user_args()
+
+
+func reset() -> void:
+	squad.clear()
+	radio.clear()
+	materials = {"scrap": 24, "circuits": 8, "cells": 5}
+	game_time = 0.0
+	kills = 0
+	tactical = false
+	game_state = "play"
+
+
+func _process(delta: float) -> void:
+	if game_state == "play":
+		game_time += delta
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and event.relative.length() > 2.0:
+		using_mouse = true
+	elif event is InputEventJoypadMotion and absf(event.axis_value) > 0.4 and event.axis in [JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
+		using_mouse = false
+
+
+# ---------------------------------------------------------------- radio / economy
+
+func say(who: String, text: String, color: Color = Color(0.85, 0.9, 0.85)) -> void:
+	var line := ("%s: %s" % [who, text]) if who != "" else text
+	radio.append({"text": line, "color": color, "t": game_time})
+	if radio.size() > 40:
+		radio.pop_front()
+	radio_msg.emit(line, color)
+
+
+func announce(text: String, color: Color = Color(1, 0.85, 0.4)) -> void:
+	banner.emit(text, color)
+
+
+func add_materials(d: Dictionary) -> void:
+	for k in d:
+		materials[k] = materials.get(k, 0) + int(d[k])
+
+
+func can_afford(cost: Dictionary) -> bool:
+	for k in cost:
+		if materials.get(k, 0) < int(cost[k]):
+			return false
+	return true
+
+
+func spend(cost: Dictionary) -> bool:
+	if not can_afford(cost):
+		return false
+	for k in cost:
+		materials[k] -= int(cost[k])
+	return true
+
+
+func cost_string(cost: Dictionary) -> String:
+	if cost.is_empty():
+		return "free"
+	var parts: Array = []
+	for k in ["scrap", "circuits", "cells"]:
+		if cost.has(k):
+			parts.append("%d %s" % [cost[k], MATERIAL_NAMES[k].to_lower()])
+	return ", ".join(parts)
+
+
+func alive_squad() -> Array:
+	return squad.filter(func(m): return m.alive)
+
+
+func squad_centroid() -> Vector2:
+	var a := alive_squad()
+	if a.is_empty():
+		return Vector2.ZERO
+	var c := Vector2.ZERO
+	for m in a:
+		c += m.position
+	return c / a.size()
+
+
+# ---------------------------------------------------------------- input map
+
+func _setup_input() -> void:
+	_key("move_up", [KEY_W])
+	_key("move_down", [KEY_S])
+	_key("move_left", [KEY_A])
+	_key("move_right", [KEY_D])
+	_axis("move_up", JOY_AXIS_LEFT_Y, -1.0)
+	_axis("move_down", JOY_AXIS_LEFT_Y, 1.0)
+	_axis("move_left", JOY_AXIS_LEFT_X, -1.0)
+	_axis("move_right", JOY_AXIS_LEFT_X, 1.0)
+
+	_button("fire_primary", [JOY_BUTTON_RIGHT_SHOULDER])     # R1
+	_mouse("fire_primary", MOUSE_BUTTON_LEFT)
+	_button("fire_secondary", [JOY_BUTTON_LEFT_SHOULDER])    # L1
+	_mouse("fire_secondary", MOUSE_BUTTON_RIGHT)
+	_axis("tactical", JOY_AXIS_TRIGGER_RIGHT, 1.0)           # R2
+	_key("tactical", [KEY_TAB, KEY_SPACE])
+	_button("open_menu", [JOY_BUTTON_START])
+	_key("open_menu", [KEY_ESCAPE, KEY_I])
+
+	_key("menu_up", [KEY_UP, KEY_W])
+	_key("menu_down", [KEY_DOWN, KEY_S])
+	_button("menu_up", [JOY_BUTTON_DPAD_UP])
+	_button("menu_down", [JOY_BUTTON_DPAD_DOWN])
+	_axis("menu_up", JOY_AXIS_LEFT_Y, -1.0)
+	_axis("menu_down", JOY_AXIS_LEFT_Y, 1.0)
+	_key("menu_accept", [KEY_ENTER, KEY_E])
+	_button("menu_accept", [JOY_BUTTON_A])
+	_key("menu_back", [KEY_BACKSPACE, KEY_Q])
+	_button("menu_back", [JOY_BUTTON_B])
+
+	_key("restart", [KEY_F5])
+	_key("toggle_director", [KEY_F3])
+	_key("toggle_filter", [KEY_F2])
+
+
+func _ensure(action: String) -> void:
+	if not InputMap.has_action(action):
+		InputMap.add_action(action, 0.25)
+
+
+func _key(action: String, keys: Array) -> void:
+	_ensure(action)
+	for k in keys:
+		var e := InputEventKey.new()
+		e.physical_keycode = k
+		InputMap.action_add_event(action, e)
+
+
+func _button(action: String, buttons: Array) -> void:
+	_ensure(action)
+	for b in buttons:
+		var e := InputEventJoypadButton.new()
+		e.button_index = b
+		InputMap.action_add_event(action, e)
+
+
+func _mouse(action: String, button: int) -> void:
+	_ensure(action)
+	var e := InputEventMouseButton.new()
+	e.button_index = button
+	InputMap.action_add_event(action, e)
+
+
+func _axis(action: String, axis: int, value: float) -> void:
+	_ensure(action)
+	var e := InputEventJoypadMotion.new()
+	e.axis = axis
+	e.axis_value = value
+	InputMap.action_add_event(action, e)
