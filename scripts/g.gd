@@ -40,23 +40,24 @@ var show_profiler := false
 # Render at the 1600x900 base resolution and scale up (fast), or at the
 # display's native resolution (sharp; Retina = ~4x the pixels to light).
 var render_fast := true
-var mech_style := 0          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
+var mech_style := 4          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
 const SETTINGS := "user://settings.cfg"
 
 
 func load_settings() -> void:
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) == OK:
-		mech_style = int(cf.get_value("look", "mech_style", 0))
+		mech_style = int(cf.get_value("look", "mech_style_v2", 4))
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--mech-style="):
 			mech_style = int(a.substr(13))
+	mech_style = clampi(mech_style, 0, Mech.STYLE_NAMES.size() - 1)
 
 
 func save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.load(SETTINGS)
-	cf.set_value("look", "mech_style", mech_style)
+	cf.set_value("look", "mech_style_v2", mech_style)
 	cf.save(SETTINGS)
 
 

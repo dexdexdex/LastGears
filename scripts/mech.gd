@@ -442,10 +442,7 @@ func _draw_body() -> void:
 		1: _style_glyph(col, rim, hot, t, dot)
 		2: _style_monolith(col, rim, hot, t, dot)
 		3: _style_orb(col, rim, hot, t, dot)
-		4: _style_orb_twin(col, rim, hot, t, dot)
-		5: _style_orb_guard(col, rim, hot, t, dot)
-		6: _style_orb_comet(col, rim, hot, t, dot)
-		7: _style_orb_lantern(col, rim, hot, t, dot)
+		4: _style_orb_tac(col, rim, hot, t, dot)
 		_: _style_hull(col, rim, hot, t, dot)
 	if muzzle_flash > 0.0:
 		draw_circle(aim_dir * (r + 11.0), 5.0 * muzzle_flash, Color(1, 0.92, 0.65, muzzle_flash))
@@ -472,13 +469,15 @@ func _draw_body() -> void:
 			var tp := aim_dir * clampf(aim_dist, ws.data.get("min_range", 0.0), ws.data.range)
 			draw_arc(tp, 10, 0, TAU, 16, Color(1, 0.6, 0.3, 0.45), 1.0, true)
 		draw_circle(aim_dir * 70.0, 1.8, Color(col, 0.6))
-	# health: slim bar + small label
+	# health: slim bar + small label (the tactical style has its own readout)
 	var bw := 24.0
+	var tac := _style() == 4
 	var by := -r - 12.0
-	draw_rect(Rect2(-bw / 2, by - 1.5, bw, 3.0), Color(0, 0, 0, 0.55))
-	draw_rect(Rect2(-bw / 2, by - 1.0, bw * hp_ratio(), 2.0), Color(0.45, 1.0, 0.6) if hp_ratio() > 0.35 else Color(1, 0.35, 0.3))
 	var font := ThemeDB.fallback_font
-	draw_string(font, Vector2(-bw / 2, by - 4), callsign, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(col, 0.7))
+	if not tac:
+		draw_rect(Rect2(-bw / 2, by - 1.5, bw, 3.0), Color(0, 0, 0, 0.55))
+		draw_rect(Rect2(-bw / 2, by - 1.0, bw * hp_ratio(), 2.0), Color(0.45, 1.0, 0.6) if hp_ratio() > 0.35 else Color(1, 0.35, 0.3))
+		draw_string(font, Vector2(-bw / 2, by - 4), callsign, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(col, 0.7))
 	# field work progress
 	var work := 0.0
 	for k in installing:
@@ -497,8 +496,8 @@ func _draw_body() -> void:
 
 # ---------------------------------------------------------------- styles
 # G.mech_style picks the look (F6 cycles in game): 0 Hull, 1 Glyph,
-# 2 Monolith, 3 Orb, 4-7 orb variations. style_override (>= 0) forces one (gallery).
-const STYLE_NAMES := ["HULL", "GLYPH", "MONOLITH", "ORB", "ORB: TWIN", "ORB: GUARD", "ORB: COMET", "ORB: LANTERN"]
+# 2 Monolith, 3 Orb, 4 Orb with tactical readouts (default). style_override (>= 0) forces one (gallery).
+const STYLE_NAMES := ["HULL", "GLYPH", "MONOLITH", "ORB", "ORB: TACTICAL"]
 var style_override := -1
 
 
@@ -748,98 +747,80 @@ func _orb_core(c: Vector2, r: float, col: Color, hot: float, dot: Texture2D, eye
 	return ec
 
 
-func _style_orb_twin(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## ORB with two armour shells turning against each other: heavy short
-	## plates close in, long thin blades further out.
+static var _mono: Font
+
+
+static func mono_font() -> Font:
+	## Terminal font for the tactical callouts; MSDF so it stays crisp at any zoom.
+	if _mono == null:
+		var f := SystemFont.new()
+		f.font_names = PackedStringArray(["Menlo", "SF Mono", "Monaco", "DejaVu Sans Mono", "Liberation Mono", "Consolas", "monospace"])
+		f.multichannel_signed_distance_field = true
+		_mono = f
+	return _mono
+
+
+func _style_orb_tac(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
+	## Still ORB (nothing orbits) framed by targeting brackets, plus a tiny
+	## terminal readout on a leader line: watched from far above.
 	var r := radius
 	_orb_shadow(r, dot)
-	var c := Vector2(0, -_orb_hover(t))
-	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
-	var n := _orb_plates()
-	var spin := facing.angle() + walk_phase * 0.15
+	var c := Vector2(0, -_orb_hover(t) * 0.5)
 	_orb_core(c, r, col, hot, dot)
-	for k in n:
-		var a := spin + TAU * k / n
-		draw_arc(c, r * 1.02, a - 0.4, a + 0.4, 8, pc, 3.4, true)
-	for k in n + 1:
-		var a2 := -spin * 0.7 + t * 0.5 + TAU * k / (n + 1)
-		draw_arc(c, r * 1.32, a2 - 0.7, a2 + 0.7, 12, Color(pc, 0.75), 1.2, true)
-	draw_arc(c, r * 1.17, 0, TAU, 32, Color(pc, 0.12), 1.0, true)
+	var b := r * 1.3
+	var k := r * 0.45
+	var bc := Color(col, 0.55)
+	var br := PackedVector2Array()
+	for sxy in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var corner: Vector2 = sxy * b
+		br.append_array([corner, corner - Vector2(sxy.x * k, 0), corner, corner - Vector2(0, sxy.y * k)])
+	draw_multiline(br, bc, 1.0)
+	_tac_callout(col, hot, t)
 
 
-func _style_orb_guard(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## ORB whose plates gather in front of the eye like a raised guard,
-	## splitting to let shots through, drifting apart again when idle.
+func _tac_callout(col: Color, hot: float, t: float) -> void:
 	var r := radius
-	_orb_shadow(r, dot)
-	var c := Vector2(0, -_orb_hover(t))
-	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
-	var n := _orb_plates() + 1
-	var aa := aim_dir.angle()
-	var gap := 0.32 + muzzle_flash * 0.25
-	var spread := 0.95 + 0.15 * sin(t * 1.3)
-	draw_arc(c, r * 1.1, 0, TAU, 32, Color(pc, 0.15), 1.0, true)
-	_orb_core(c, r, col, hot, dot)
-	for k in n:
-		var side := -1.0 if k % 2 == 0 else 1.0
-		var idx := float(k / 2)
-		var a := aa + side * (gap + 0.42 + idx * spread * 0.85)
-		var len := 0.36 - idx * 0.06
-		draw_arc(c, r * 1.1, a - len, a + len, 8, Color(pc, 1.0 - idx * 0.25), 3.0, true)
-
-
-func _style_orb_comet(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## ORB whose plates leave fading trails as they orbit; the orbit speeds
-	## up with movement and heat, so a running mech visibly whirls.
-	var r := radius
-	_orb_shadow(r, dot)
-	var c := Vector2(0, -_orb_hover(t))
-	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
-	var n := _orb_plates()
-	var speed := 0.6 + vel.length() * 0.025 + hot * 2.5
-	var spin := t * speed + facing.angle() * 0.5
-	_orb_core(c, r, col, hot, dot)
-	for k in n:
-		var a := spin + TAU * k / n
-		for j in 4:
-			var tail := a - 0.35 - j * 0.28
-			draw_arc(c, r * 1.08, tail - 0.14, tail + 0.14, 4, Color(pc, 0.42 - j * 0.1), 3.0 - j * 0.6, true)
-		draw_arc(c, r * 1.08, a - 0.32, a + 0.32, 8, pc, 3.2, true)
-		var tip := c + Vector2.from_angle(a + 0.32) * r * 1.08
-		draw_texture_rect(dot, Rect2(tip - Vector2(2, 2), Vector2(4, 4)), false, pc.lightened(0.5))
-
-
-func _style_orb_lantern(col: Color, rim: Color, hot: float, t: float, dot: Texture2D) -> void:
-	## ORB with running lights: each plate carries lamps that chase round
-	## in sequence, and a lit equator band rolls across the sphere.
-	var r := radius
-	_orb_shadow(r, dot)
-	var c := Vector2(0, -_orb_hover(t))
-	var pc := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.6)
-	var n := _orb_plates()
-	var spin := facing.angle() + walk_phase * 0.15
-	_orb_ball(c, r * 0.82, col, dot)
-	# equator band: a squashed arc rolling with the walk
-	var roll := sin(walk_phase * 0.5) * 0.45
-	draw_set_transform(c, facing.angle() + PI * 0.5, Vector2(1.0, 0.35 + roll * 0.4))
-	draw_arc(Vector2.ZERO, r * 0.8, 0.15, PI - 0.15, 12, Color(col.lightened(0.4), 0.55), 1.2, true)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	var ec := _eye_col(col, hot)
-	var ep := c + aim_dir * r * 0.42
-	_orb_eye(ep, r * 0.17, ec, dot)
-	var kick := muzzle_flash * 3.0
-	draw_line(ep + aim_dir * r * 0.17, c + aim_dir * (r + 9.0 - kick), Color(ec, 0.8), 1.6, true)
-	var lamps := 3
-	for k in n:
-		var a := spin + TAU * k / n
-		draw_arc(c, r * 1.08, a - 0.55, a + 0.55, 10, col.darkened(0.25), 3.0, true)
-		for j in lamps:
-			var la := a - 0.42 + 0.84 * j / (lamps - 1)
-			var on := fposmod(t * 4.0 - j - k * 1.5, float(lamps + 1)) < 1.0
-			var lp := c + Vector2.from_angle(la) * r * 1.08
-			var s := 2.6 if on else 1.4
-			draw_texture_rect(dot, Rect2(lp - Vector2(s, s), Vector2(s, s) * 2.0), false, ec if on else Color(pc, 0.6))
-	draw_arc(c, r * 1.08, 0, TAU, 32, Color(pc, 0.18), 1.0, true)
+	var idx := G.squad.find(self)
+	# spread the four readouts to different corners so they don't stack
+	var sx := -1.0 if idx == 1 or idx == 3 else 1.0
+	var sy := 1.0 if idx >= 2 else -1.0
+	var d := Vector2(sx, sy)
+	var p0 := d * r * 1.3
+	var p1 := p0 + d * 10.0
+	var p2 := p1 + Vector2(sx * 8.0, 0)
+	var lc := Color(col, 0.6)
+	draw_polyline(PackedVector2Array([p0, p1, p2]), lc, 1.0)
+	var font := mono_font()
+	var fs := 6
+	var lh := 7.0
+	var txt := col.lightened(0.55)
+	var lines := []   # [text, colour]
+	lines.append(["%s//U-%02d%s" % [callsign, idx + 1, " CMD" if is_player else ""], Color(txt, 0.95)])
+	if not alive:
+		lines.append(["SIGNAL LOST", Color(1, 0.35, 0.3)])
+	else:
+		var hr := hp_ratio()
+		lines.append(["HUL %3d  HT %3d%s" % [roundi(hr * 100), roundi(heat), ("  SH %d" % roundi(shield)) if max_shield > 0.0 else ""],
+			Color(1, 0.4, 0.3) if hr < 0.35 else (Color(1.0, 0.65, 0.3) if hot > 0.3 else Color(txt, 0.8))])
+		var wl := ""
+		for slot in ["primary", "secondary"]:
+			var ws: WeaponState = weapons[slot]
+			if ws:
+				var nm: String = String(ws.data.get("short", ws.id)).substr(0, 4)
+				wl += "%s:%s " % [nm, ("RLD" if ws.reload_t > 0.0 else str(ws.ammo))]
+		lines.append([wl.strip_edges(), Color(txt, 0.7)])
+		var cur := "_" if int(t * 2.5) % 2 == 0 else " "
+		lines.append(["> " + state_label.to_lower() + cur, Color(col.lightened(0.3), 0.9)])
+	var w := 0.0
+	for ln in lines:
+		w = maxf(w, font.get_string_size(ln[0], HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+	var h := lh * lines.size() + 3.0
+	var x0 := p2.x + (2.0 if sx > 0 else -w - 6.0)
+	var y0 := p2.y - (h if sy < 0 else 0.0) + (3.0 if sy < 0 else -3.0)
+	draw_rect(Rect2(x0, y0, w + 4.0, h), Color(0.0, 0.03, 0.02, 0.55))
+	draw_line(Vector2(x0 if sx > 0 else x0 + w + 4.0, y0), Vector2(x0 if sx > 0 else x0 + w + 4.0, y0 + h), lc, 1.0)
+	for i in lines.size():
+		draw_string(font, Vector2(x0 + 2.0, y0 + 1.5 + lh * (i + 1) - 1.5), lines[i][0], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, lines[i][1])
 
 func _draw_rot_rect(center: Vector2, dir: Vector2, half: Vector2, col: Color) -> void:
 	var s := dir.orthogonal()

@@ -46,7 +46,7 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
 | FPS meter: per-system profiler breakdown | F1 | |
 | Render resolution: fast (1600×900 scaled up) / sharp (native, e.g. Retina) | F9 | |
-| Mech look: HULL / GLYPH / MONOLITH / ORB / orb variants TWIN, GUARD, COMET, LANTERN (remembered) | F6 | |
+| Mech look: ORB TACTICAL (default: still orb + terminal readout per unit) / HULL / GLYPH / MONOLITH / ORB (remembered) | F6 | |
 | Toggle director readout | F3 | |
 | Toggle satellite grain/tint (darkness stays) | F2 | |
 | Restart | F5 | |
@@ -206,4 +206,4 @@ intensity, materials, each mech's state and hull), and exercises the refit menu.
 Add `--shots=/some/dir` (with a real or virtual display, not `--headless`) to save
 screenshots. `-- --gallery --shots=/some/dir` renders every mech style side by
 side to `gallery.png` (`--gallery-styles=3,4,5` picks rows); `--mech-style=N`
-(0-7) forces a style.
+(0-4) forces a style.
