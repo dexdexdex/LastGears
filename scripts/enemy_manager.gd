@@ -51,6 +51,8 @@ class Enemy:
 	var awake := true          # dormant swarm fields idle until something comes close
 	var wander := Vector2.ZERO
 	var want := Vector2.ZERO   # desired velocity, set by the (time-sliced) think step
+	var skip := 0              # LOD: far machines skip think slots...
+	var acc := 0.0             # ...and get the skipped time when they do think
 	var seen := false          # inside some squad mech's vision cone right now
 	var seen_t := -99.0
 
@@ -129,9 +131,15 @@ func _process_body(delta: float) -> void:
 		if not e.alive:
 			continue
 		if i % k == think_slice:
-			_think(e, think_dt, alive_mechs)
-			if not e.alive:
-				continue
+			e.acc += think_dt
+			if e.skip > 0:
+				e.skip -= 1
+			else:
+				var dt := e.acc
+				e.acc = 0.0
+				_think(e, dt, alive_mechs)
+				if not e.alive:
+					continue
 		if not e.awake and e.want == Vector2.ZERO and e.vel == Vector2.ZERO and e.flash <= 0.0:
 			continue
 		_move(e, delta)
@@ -184,6 +192,8 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	e.target = best
 	var to_t := best.position - e.pos
 	var dist := sqrt(bd)
+	if dist > 1100.0:
+		e.skip = 3          # far from everyone: re-decide ~5x/s
 	e.los_t -= delta
 	if e.los_t <= 0.0:
 		e.los_t = 0.35
@@ -344,7 +354,7 @@ func seed_dormant(count: int, avoid: Vector2, rng: RandomNumberGenerator) -> voi
 	## Scatter idle clusters of slow crawlers (with a few skitters) across the zone.
 	var placed := 0
 	var tries := 0
-	while placed < count and tries < 400:
+	while placed < count and tries < 900:
 		tries += 1
 		var c := Vector2(rng.randf() * G.world.W, rng.randf() * G.world.H) * World.CELL
 		if G.world.is_solid_at(c) or c.distance_to(avoid) < 900.0:
@@ -389,7 +399,8 @@ func kill(e: Enemy, by: Mech) -> void:
 			by.brain.on_kill(e)
 	if G.director:
 		G.director.report_kill()
-	G.projectiles.add_fx("puff", e.pos, e.r * 2.5, e.d.color, 0.4)
+	G.projectiles.add_fx("puff", e.pos, e.r * 2.5, e.d.color, 0.3)
+	G.projectiles.add_fx("shards", e.pos, e.r * 5.0, e.d.color.lightened(0.2), 0.35)
 	if e.d.get("bomb", false):
 		G.projectiles.explode(e.pos, e.d.bomb_r, e.d.bomb_dmg, 1, true)
 	if randf() < e.d.drop:

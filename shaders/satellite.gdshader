@@ -9,7 +9,7 @@ uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
 uniform sampler2D light_tex : filter_linear;
 uniform bool lit = true;
 uniform vec3 ambient = vec3(0.035, 0.045, 0.045);
-uniform float light_gain = 1.1;
+uniform float light_gain = 1.35;
 uniform bool fx_on = true;
 uniform float grain = 0.07;
 uniform float scan = 0.06;

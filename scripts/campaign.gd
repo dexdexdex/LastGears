@@ -15,7 +15,7 @@ const SQUAD_DEF := [
 const RECRUITS := ["Teo Marsh", "Ana Petrak", "Joss Imani", "Kit Varga", "Rune Calder", "Oyelaran", "Nell Szabo", "Duc Pham"]
 
 # kill bounties paid by havens on arrival
-const BOUNTY := {"crawler": 0.2, "skitter": 0.5, "spitter": 1.5, "tick": 1.5, "warden": 12.0}
+const BOUNTY := {"crawler": 0.1, "skitter": 0.3, "spitter": 1.0, "tick": 1.0, "warden": 10.0}
 
 var node_idx := 0                 # where we are (or departed from)
 var dest_idx := 0                 # where this leg goes

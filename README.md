@@ -76,6 +76,12 @@ the region map (heading north-west on the map = heading north-west in the zone).
 Every run rolls fresh weapons for every mech (within each frame's weight limit);
 frames and role modules stay fixed.
 
+- **Biomes.** Each route on the region map has a terrain, and the zone is built
+  to match: *dead city* (blocks, plazas, flickering streetlights), *industrial
+  yards* (warehouses, storage tanks, pipe runs, sodium floodlights), *flooded
+  district* (shallow water slows mechs ~40%, cold moonlit tint), *scrap fields*
+  (wreck piles, hulks, burning wrecks, craters) and *dead forest* (dense bare
+  trees throwing long shadows; the darkest). All props block movement and light.
 - **Darkness.** The zones are pitch black. Each mech throws a cone of light where
   it aims (shadowed by buildings) plus a small hull halo; explosions and muzzle
   flashes light things up briefly; settlements burn beacons. Machines are only
@@ -103,8 +109,11 @@ frames and role modules stay fixed.
   and can't fire, and your squad moves to cover you. Fabricate parts from salvaged
   scrap / circuits / cells; each install takes seconds, during which that slot is
   offline. Stripping a part salvages half its scrap. Field repair is here too.
-- **Customisation.** 4 frames, 7 weapons (autocannon, gatling, flak, rockets, pulse
-  laser, mortar, incinerator), 9 modules (plating, heat sinks, reactor booster,
+- **Customisation.** 4 frames, 11 weapons (autocannon, gatling, flak, rockets, pulse
+  laser, mortar, incinerator, plus the rail driver — a piercing beam through every
+  machine in a line — the arc caster — lightning chaining through 6 machines — the
+  cluster mortar — a shell that bursts into bomblets — and the swarm pod — homing
+  micro-missiles), 9 modules (plating, heat sinks, reactor booster,
   servos, shield, targeting computer, ammo rack, repair drone, fire cycler). Every
   part has weight vs. frame max, power draw vs. reactor output, and heat vs.
   cooling. Overweight = slower and hotter; power deficit = weapons cycle slower;

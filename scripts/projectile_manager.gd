@@ -18,13 +18,32 @@ class Proj:
 	var owner: Mech
 	var hit := {}            # enemies already hit (pierce)
 	var radius := 4.0
+	var kind := ""           # weapon id (drives the look: flames, smoke...)
+	var homing := 0.0        # turn rate, rad/s
+	var tgt = null
+	var retarget := 0.0
+	var bomblets := 0
+	var age := 0.0
+	var life0 := 1.0
+	var smoke := 0.0
 
 var shots: Array = []
-var fx: Array = []           # {type, pos, r, color, t, dur}
+var fx: Array = []           # {type, pos, r, color, t, dur, (b | pts | seed)}
+var pending: Array = []      # delayed bomblet blasts {pos, t, dmg, r}
 
 
 func spawn_shot(from: Vector2, dir: Vector2, d: Dictionary, team: int, owner: Mech, aim_point: Vector2) -> void:
+	var mode: String = d.get("mode", "")
+	if mode == "beam":
+		_fire_beam(from, dir, d, owner)
+		return
+	if mode == "chain":
+		_fire_chain(from, dir, d, owner)
+		return
 	var p := Proj.new()
+	p.kind = d.get("id", "")
+	p.homing = float(d.get("turn", 0.0))
+	p.bomblets = int(d.get("bomblets", 0))
 	p.pos = from
 	p.start = from
 	p.team = team
@@ -42,7 +61,97 @@ func spawn_shot(from: Vector2, dir: Vector2, d: Dictionary, team: int, owner: Me
 		var dist := clampf(from.distance_to(aim_point), float(d.get("min_range", 0.0)), float(d.range))
 		p.target = from + dir * dist
 		p.life = dist / spd
+	p.life0 = p.life
 	shots.append(p)
+
+
+func _fire_beam(from: Vector2, dir: Vector2, d: Dictionary, owner: Mech) -> void:
+	var dist := G.world.ray_dist(from, dir, float(d.range))
+	var end := from + dir * dist
+	var dmg := float(d.dmg)
+	var n := 0
+	for e in G.enemies.query_segment(from, end, 4.0):
+		G.enemies.damage(e, dmg, owner)
+		if n < 12:
+			add_fx("spark", e.pos, 6.0, d.color, 0.2)
+		n += 1
+		dmg *= 0.93
+	var f := add_fx("beam", from, float(d.width), d.color, 0.3)
+	f["b"] = end
+	add_fx("ring", end, 26.0, d.color, 0.3)
+	if G.lighting:
+		G.lighting.flash(end, 170.0, 0.7)
+		G.lighting.flash((from + end) * 0.5, 280.0, 0.35)
+	if owner == G.player and G.camera:
+		G.camera.shake(0.14)
+
+
+func _fire_chain(from: Vector2, dir: Vector2, d: Dictionary, owner: Mech) -> void:
+	var rng_ := float(d.range)
+	var best = null
+	var bs := INF
+	for e in G.enemies.query_radius(from + dir * rng_ * 0.5, rng_ * 0.6):
+		var v: Vector2 = e.pos - from
+		var dist := v.length()
+		if dist > rng_ or dist < 1.0:
+			continue
+		var ang := absf(dir.angle_to(v))
+		if ang > 0.4:
+			continue
+		var sc := ang * 300.0 + dist * 0.3
+		if sc < bs and G.world.has_los(from, e.pos):
+			bs = sc
+			best = e
+	var pts := PackedVector2Array([from])
+	if best == null:
+		_jag(pts, from, from + dir * rng_ * 0.45)
+		var f0 := add_fx("arc", from, 2.0, d.color, 0.12)
+		f0["pts"] = pts
+		return
+	var hit := {}
+	var cur := from
+	var e2 = best
+	var dmg := float(d.dmg)
+	for hop in int(d.get("chains", 5)) + 1:
+		_jag(pts, cur, e2.pos)
+		G.enemies.damage(e2, dmg, owner)
+		hit[e2] = true
+		cur = e2.pos
+		dmg *= 0.9
+		var nxt = null
+		var nd := INF
+		for o in G.enemies.query_radius(cur, float(d.get("chain_r", 120.0))):
+			if hit.has(o) or not o.alive:
+				continue
+			var dd: float = o.pos.distance_squared_to(cur)
+			if dd < nd and G.world.has_los(cur, o.pos):
+				nd = dd
+				nxt = o
+		if nxt == null:
+			break
+		e2 = nxt
+	var f := add_fx("arc", from, 2.0, d.color, 0.16)
+	f["pts"] = pts
+	if G.lighting:
+		G.lighting.flash(cur, 140.0, 0.5)
+
+
+func _jag(pts: PackedVector2Array, a: Vector2, b: Vector2) -> void:
+	var n := (b - a).orthogonal().normalized()
+	for k in [0.33, 0.66]:
+		pts.append(a.lerp(b, k) + n * randf_range(-9.0, 9.0))
+	pts.append(b)
+
+
+func _nearest_enemy(p: Vector2, r: float):
+	var best = null
+	var bd := INF
+	for e in G.enemies.query_radius(p, r):
+		var dd: float = e.pos.distance_squared_to(p)
+		if dd < bd:
+			bd = dd
+			best = e
+	return best
 
 
 func spawn_enemy_bolt(from: Vector2, dir: Vector2, dmg: float, spd: float) -> void:
@@ -59,14 +168,16 @@ func spawn_enemy_bolt(from: Vector2, dir: Vector2, dmg: float, spd: float) -> vo
 	shots.append(p)
 
 
-func add_fx(type: String, pos: Vector2, r: float, color: Color, dur: float) -> void:
-	fx.append({"type": type, "pos": pos, "r": r, "color": color, "t": 0.0, "dur": dur})
+func add_fx(type: String, pos: Vector2, r: float, color: Color, dur: float) -> Dictionary:
+	var f := {"type": type, "pos": pos, "r": r, "color": color, "t": 0.0, "dur": dur}
+	fx.append(f)
 	if fx.size() > 600:
 		# keep wrecks, drop oldest transient fx
 		for i in fx.size():
 			if fx[i].type != "wreck":
 				fx.remove_at(i)
 				break
+	return f
 
 
 func explode(pos: Vector2, radius: float, dmg: float, team: int, hurt_mechs: bool) -> void:
@@ -101,6 +212,15 @@ func _process_body(delta: float) -> void:
 		if _step(p, delta):
 			keep.append(p)
 	shots = keep
+	if not pending.is_empty():
+		var still: Array = []
+		for b in pending:
+			b.t -= delta
+			if b.t <= 0.0:
+				explode(b.pos, b.r, b.dmg, 0, false)
+			else:
+				still.append(b)
+		pending = still
 	var keep_fx: Array = []
 	for f in fx:
 		f.t += delta
@@ -112,11 +232,32 @@ func _process_body(delta: float) -> void:
 
 func _step(p: Proj, delta: float) -> bool:
 	p.life -= delta
+	p.age += delta
+	if p.homing > 0.0:
+		p.retarget -= delta
+		if p.retarget <= 0.0 or p.tgt == null or not p.tgt.alive:
+			p.retarget = 0.2
+			p.tgt = _nearest_enemy(p.pos + p.vel.normalized() * 110.0, 240.0)
+		if p.tgt != null:
+			var want: Vector2 = (p.tgt.pos - p.pos)
+			var turn := clampf(p.vel.angle_to(want), -p.homing * delta, p.homing * delta)
+			p.vel = p.vel.rotated(turn)
+	if p.kind in ["rockets", "swarm"]:
+		p.smoke -= delta
+		if p.smoke <= 0.0:
+			p.smoke = 0.035
+			add_fx("smoke", p.pos, 3.0, Color(0.55, 0.55, 0.52), 0.55)
 	var np := p.pos + p.vel * delta
 	if p.lob:
 		p.pos = np
 		if p.life <= 0.0:
-			explode(p.target, p.splash, p.dmg, p.team, false)
+			if p.bomblets > 0:
+				explode(p.target, p.splash * 0.7, p.dmg, p.team, false)
+				for i in p.bomblets:
+					var off := Vector2.from_angle(randf() * TAU) * randf_range(20.0, 85.0)
+					pending.append({"pos": p.target + off, "t": randf_range(0.08, 0.45), "dmg": p.dmg, "r": p.splash})
+			else:
+				explode(p.target, p.splash, p.dmg, p.team, false)
 			return false
 		return true
 	if G.world.segment_blocked(p.pos, np):
@@ -178,9 +319,19 @@ func _draw_body() -> void:
 			draw_circle(p.pos, 2.5, Color(0, 0, 0, 0.4))
 			draw_circle(p.pos - Vector2(0, h), 3.5, p.color)
 			draw_arc(p.target, p.splash * (1.0 - k * 0.5), 0, TAU, 24, Color(1, 0.5, 0.2, 0.35), 1.0)
+		elif p.kind == "flamer":
+			var k2: float = clampf(p.age / maxf(p.life0, 0.01), 0.0, 1.0)
+			var fc: Color = Color(1.0, 0.85, 0.4).lerp(Color(0.9, 0.25, 0.08), k2)
+			draw_circle(p.pos, 2.5 + k2 * 13.0, Color(fc, 0.55 * (1.0 - k2)))
+			draw_circle(p.pos, 1.5 + k2 * 5.0, Color(1, 0.95, 0.7, 0.6 * (1.0 - k2)))
+		elif p.homing > 0.0 or p.kind == "rockets":
+			var dv: Vector2 = p.vel.normalized()
+			draw_line(p.pos - dv * 7.0, p.pos, p.color, p.width + 1.0)
+			draw_circle(p.pos - dv * 8.0, 2.5, Color(1, 0.6, 0.2, 0.9))
 		else:
 			var tail: Vector2 = p.vel.normalized() * minf(p.vel.length() * 0.025, 18.0)
 			draw_line(p.pos - tail, p.pos, p.color, p.width)
+			draw_line(p.pos - tail * 0.4, p.pos, Color(1, 1, 1, 0.7), maxf(1.0, p.width - 1.0))
 	for f in fx:
 		if not view.has_point(f.pos):
 			continue
@@ -195,3 +346,21 @@ func _draw_body() -> void:
 				draw_circle(f.pos, f.r * (0.5 + k), Color(f.color, (1.0 - k) * 0.6))
 			"ring":
 				draw_arc(f.pos, f.r * k, 0, TAU, 32, Color(f.color, 1.0 - k), 2.0)
+			"smoke":
+				draw_circle(f.pos, f.r * (1.0 + k * 2.5), Color(f.color, 0.22 * (1.0 - k)))
+			"beam":
+				var w: float = f.r * (1.0 - k) + 1.0
+				draw_line(f.pos, f.b, Color(f.color, 0.45 * (1.0 - k)), w * 3.0)
+				draw_line(f.pos, f.b, Color(f.color, 1.0 - k), w)
+				draw_line(f.pos, f.b, Color(1, 1, 1, 1.0 - k), maxf(1.0, w * 0.4))
+			"arc":
+				var flick := 1.0 if int(f.t * 60.0) % 2 == 0 else 0.6
+				draw_polyline(f.pts, Color(f.color, (1.0 - k) * flick), 3.0)
+				draw_polyline(f.pts, Color(1, 1, 1, (1.0 - k) * flick), 1.2)
+			"shards":
+				var rs := int(f.pos.x * 31.0 + f.pos.y * 17.0)
+				for q in 5:
+					var a := float((rs + q * 97) % 628) / 100.0
+					var dq := Vector2.from_angle(a)
+					var p0: Vector2 = f.pos + dq * f.r * (0.2 + k * 1.2)
+					draw_line(p0, p0 + dq * 3.0, Color(f.color, 1.0 - k), 1.5)

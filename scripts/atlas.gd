@@ -14,7 +14,7 @@ const HIVES := ["Hive Theta", "Node Black", "The Choir", "Foundry Prime"]
 const RUINS := ["Old Meridian", "Sky Harbor", "Cradle Dam"]
 const ZONE_A := ["Ash", "Glass", "Rust", "Kiln", "Salt", "Pylon", "Copper", "Silent", "Bone", "Static", "Cinder", "Hollow", "Grey", "Ember", "Iron"]
 const ZONE_B := ["Flats", "Sprawl", "Expressway", "Orchard", "Marsh", "Arcology", "Interchange", "Wastes", "Yards", "Causeway", "Terraces", "Gulch", "Fields", "Canals", "Barrens"]
-const TERRAIN := ["dead city", "open flats", "collapsed overpasses", "flooded blocks", "scrap fields", "industrial yards"]
+const TERRAIN := ["dead city", "industrial yards", "flooded district", "scrap fields", "dead forest"]
 
 var nodes: Array = []    # {name, kind, pos, pop, note}
 var edges: Array = []    # {a, b, zone, threat, terrain, known}

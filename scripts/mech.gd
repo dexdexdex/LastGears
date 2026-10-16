@@ -82,6 +82,7 @@ func apply_loadout(full: bool = false) -> void:
 	max_shield = stats.shield
 	shield = minf(shield, max_shield) if not full else max_shield
 	radius = float(PartsDB.CHASSIS[loadout.chassis_id]["radius"])
+	_shape_r = -1.0
 	for key in ["primary", "secondary"]:
 		var id := loadout.get_slot(key)
 		if id == "":
@@ -106,6 +107,8 @@ func speed() -> float:
 		s *= 0.45
 	if busy_menu or repairing > 0.0:
 		s = 0.0
+	if G.world and G.world.in_water(position):
+		s *= 0.62
 	return s
 
 
@@ -373,73 +376,155 @@ func _draw() -> void:
 	G.pe("mechs draw", _t0)
 
 
+# ---------------------------------------------------------------- look
+
+# Silhouettes in "facing space" (x = forward, y = side), unit radius,
+# rounded with Chaikin smoothing for a clean abstract look.
+const SHAPES := {
+	"vanguard": [Vector2(1.05, 0), Vector2(0.55, 0.62), Vector2(-0.5, 0.78), Vector2(-0.92, 0.36), Vector2(-0.92, -0.36), Vector2(-0.5, -0.78), Vector2(0.55, -0.62)],
+	"bulwark": [Vector2(0.9, 0), Vector2(0.62, 0.86), Vector2(-0.5, 0.98), Vector2(-0.98, 0.46), Vector2(-0.98, -0.46), Vector2(-0.5, -0.98), Vector2(0.62, -0.86)],
+	"kestrel": [Vector2(1.25, 0), Vector2(0.2, 0.52), Vector2(-0.72, 0.84), Vector2(-0.42, 0.18), Vector2(-0.82, 0), Vector2(-0.42, -0.18), Vector2(-0.72, -0.84), Vector2(0.2, -0.52)],
+	"sparrow": [Vector2(1.05, 0), Vector2(0.12, 0.72), Vector2(-0.78, 0.82), Vector2(-0.52, 0), Vector2(-0.78, -0.82), Vector2(0.12, -0.72)],
+}
+const LEGS := {"vanguard": 4, "bulwark": 4, "kestrel": 2, "sparrow": 2}
+var _shape := PackedVector2Array()
+var _inner := PackedVector2Array()
+var _shape_r := -1.0
+
+
+static func _chaikin(pts: Array, iters: int) -> Array:
+	var cur := pts
+	for it in iters:
+		var nxt: Array = []
+		for i in cur.size():
+			var p0: Vector2 = cur[i]
+			var p1: Vector2 = cur[(i + 1) % cur.size()]
+			nxt.append(p0.lerp(p1, 0.25))
+			nxt.append(p0.lerp(p1, 0.75))
+		cur = nxt
+	return cur
+
+
+func _ensure_shape() -> void:
+	if is_equal_approx(_shape_r, radius) and not _shape.is_empty():
+		return
+	_shape_r = radius
+	var base: Array = _chaikin(SHAPES.get(loadout.chassis_id, SHAPES["vanguard"]), 2)
+	_shape = PackedVector2Array()
+	_inner = PackedVector2Array()
+	for v in base:
+		_shape.append(v * radius * 1.25)
+		_inner.append(v * radius * 0.7 + Vector2(-radius * 0.12, 0))
+
+
 func _draw_body() -> void:
+	_ensure_shape()
+	var r := radius
 	var col := color
 	if damage_flash > 0.0:
 		col = col.lerp(Color.WHITE, damage_flash * 0.7)
-	var side := facing.orthogonal()
-	var r := radius
+	var hot := clampf((heat - 45.0) / 55.0, 0.0, 1.0)
+	var rim := col.lerp(Color(1.0, 0.5, 0.2), hot * 0.7)
+	var t := Time.get_ticks_msec() / 1000.0
+
 	# aim cone edges, so you can tell whose light is whose
 	if alive:
 		for sgn in [-1.0, 1.0]:
 			var ed := aim_dir.rotated(Lighting.VIS_HALF * sgn)
-			draw_line(ed * (r + 8.0), ed * 170.0, Color(color, 0.22), 1.0)
-	# dodge afterimages
+			draw_line(ed * (r + 10.0), ed * 170.0, Color(color, 0.2), 1.0, true)
+	# dodge afterimages: silhouette ghosts
 	for i in ghosts.size():
-		var gp: Vector2 = ghosts[i] - position
-		draw_circle(gp, r * 0.9, Color(col, 0.08 + 0.22 * float(i + 1) / ghosts.size()))
-	# shadow
-	draw_circle(Vector2(3, 4), r + 2, Color(0, 0, 0, 0.35))
-	# legs (stomp animation)
-	var stride := sin(walk_phase) * r * 0.55
-	for s in [-1.0, 1.0]:
-		var base: Vector2 = side * s * r * 0.75
-		var foot: Vector2 = base + facing * stride * s
-		draw_line(base * 0.6, foot, col.darkened(0.5), 3.0)
-		_draw_rot_rect(foot, facing, Vector2(r * 0.55, r * 0.35), col.darkened(0.35))
-	# hull
-	var pts := PackedVector2Array()
-	for i in 8:
-		var a := facing.angle() + TAU * (i + 0.5) / 8.0
-		var rr := r * (0.95 if i % 2 == 0 else 0.8)
-		pts.append(Vector2.from_angle(a) * rr)
-	draw_colored_polygon(pts, col.darkened(0.55))
-	pts.append(pts[0])
-	draw_polyline(pts, col, 1.6)
-	# heat glow
-	if heat > 55.0:
-		var hcol := Color(1, 0.45, 0.15, (heat - 55.0) / 45.0 * 0.55)
-		draw_circle(Vector2.ZERO, r * 0.6, hcol)
-	# turret + barrels
-	draw_circle(Vector2.ZERO, r * 0.45, col)
+		var k := float(i + 1) / ghosts.size()
+		draw_set_transform(ghosts[i] - position, facing.angle(), Vector2.ONE)
+		draw_colored_polygon(_shape, Color(col, 0.06 + 0.16 * k))
+	# soft shadow
+	draw_set_transform(Vector2(3, 5), facing.angle(), Vector2.ONE)
+	draw_colored_polygon(_shape, Color(0, 0, 0, 0.28))
+	draw_set_transform(Vector2.ZERO, facing.angle(), Vector2.ONE)
+
+	# legs: articulated, abstract
+	var nl: int = LEGS.get(loadout.chassis_id, 2)
+	var legc := col.darkened(0.35)
+	for li in nl:
+		var sgn2 := -1.0 if li % 2 == 0 else 1.0
+		var fore := 0.0 if nl == 2 else (0.38 if li < 2 else -0.38)
+		var phase := walk_phase + (0.0 if (li % 2 == 0) == (li < 2) else PI)
+		var hip := Vector2(fore * r, sgn2 * r * 0.55)
+		var foot := Vector2(fore * r + sin(phase) * r * 0.42, sgn2 * r * 1.12)
+		var knee := (hip + foot) * 0.5 + Vector2(r * 0.12, sgn2 * r * 0.28)
+		draw_polyline(PackedVector2Array([hip, knee, foot]), legc, 2.0, true)
+		draw_circle(foot, 1.6, col.darkened(0.3))
+		draw_circle(knee, 1.0, col.darkened(0.2))
+
+	# hull: gradient fill (lighter toward the front), inset panel, clean rim
+	var cols := PackedColorArray()
+	for v in _shape:
+		var k2 := clampf((v.x / r + 1.0) * 0.5, 0.0, 1.0)
+		cols.append(col.darkened(0.72).lerp(col.darkened(0.18), k2))
+	draw_polygon(_shape, cols)
+	draw_colored_polygon(_inner, Color(col.darkened(0.78), 0.95))
+	var outline := _shape.duplicate()
+	outline.append(_shape[0])
+	draw_polyline(outline, rim, 1.4, true)
+	var inl := _inner.duplicate()
+	inl.append(_inner[0])
+	draw_polyline(inl, Color(rim, 0.35), 1.0, true)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	# core: glows, pulses, runs orange when hot
+	var core_c := col.lightened(0.45).lerp(Color(1.0, 0.55, 0.2), hot)
+	var pulse := 0.5 + 0.5 * sin(t * (3.0 + hot * 6.0))
+	var core_p := -facing * r * 0.35
+	draw_circle(core_p, r * (0.26 + 0.05 * pulse), Color(core_c, 0.16 + 0.12 * hot))
+	draw_circle(core_p, r * 0.12, core_c)
+
+	# weapons: barrels match the fitted gun, kick back on fire
 	var perp := aim_dir.orthogonal()
-	draw_line(perp * 3.0, perp * 3.0 + aim_dir * (r + 7.0), col.lightened(0.2), 2.5)
-	if weapons["secondary"] != null:
-		draw_line(-perp * 3.5, -perp * 3.5 + aim_dir * (r + 2.0), col.darkened(0.1), 3.5)
+	var kick := muzzle_flash * 3.0
+	var wp: WeaponState = weapons["primary"]
+	if wp:
+		var id: String = wp.id
+		var blen := r + (16.0 if id == "railgun" else (6.0 if id in ["flak", "flamer"] else 10.0)) - kick
+		var base_p := perp * 2.5
+		if id in ["gatling", "autocannon", "swarm"]:
+			for o in [-1.6, 1.6]:
+				draw_line(base_p + perp * o + aim_dir * r * 0.2, base_p + perp * o + aim_dir * blen, col.lightened(0.25), 1.6, true)
+		else:
+			draw_line(base_p + aim_dir * r * 0.2, base_p + aim_dir * blen, col.lightened(0.25), 3.0 if id in ["flak", "flamer", "rockets", "railgun"] else 2.2, true)
+		draw_circle(base_p + aim_dir * blen, 1.6, col.lightened(0.5))
+	var ws2: WeaponState = weapons["secondary"]
+	if ws2:
+		var sb := -perp * 4.5
+		draw_line(sb + aim_dir * r * 0.1, sb + aim_dir * (r + 2.0 - kick * 0.5), col.darkened(0.05), 4.0, true)
+		draw_circle(sb + aim_dir * (r + 2.0 - kick * 0.5), 2.0, col.lightened(0.2))
+	draw_circle(Vector2.ZERO, r * 0.24, col.darkened(0.55))
+	draw_arc(Vector2.ZERO, r * 0.24, 0, TAU, 18, Color(col.lightened(0.2), 0.9), 1.1, true)
 	if muzzle_flash > 0.0:
-		draw_circle(aim_dir * (r + 8.0), 4.0 * muzzle_flash, Color(1, 0.9, 0.6, muzzle_flash))
-	# shield
+		draw_circle(aim_dir * (r + 11.0), 5.0 * muzzle_flash, Color(1, 0.92, 0.65, muzzle_flash))
+
+	# shield: segmented shimmer ring
 	if shield > 1.0:
-		draw_arc(Vector2.ZERO, r + 5.0, 0, TAU, 28, Color(0.4, 0.85, 1.0, 0.25 + 0.35 * shield / max_shield), 1.5)
+		var sa := 0.2 + 0.4 * shield / max_shield
+		for k3 in 6:
+			var a0 := t * 0.8 + TAU * k3 / 6.0
+			draw_arc(Vector2.ZERO, r + 6.0, a0, a0 + TAU / 6.0 - 0.25, 8, Color(0.45, 0.85, 1.0, sa), 1.5, true)
 	# player marker
 	if is_player:
-		var t := Time.get_ticks_msec() / 1000.0
-		draw_arc(Vector2.ZERO, r + 9.0 + sin(t * 4.0), -0.4, 0.4, 6, Color(col, 0.7), 1.5)
-		draw_arc(Vector2.ZERO, r + 9.0 + sin(t * 4.0), PI - 0.4, PI + 0.4, 6, Color(col, 0.7), 1.5)
-		# aim reticle along stick
+		var rr := r + 10.0 + sin(t * 4.0)
+		draw_arc(Vector2.ZERO, rr, -0.4, 0.4, 8, Color(col, 0.7), 1.5, true)
+		draw_arc(Vector2.ZERO, rr, PI - 0.4, PI + 0.4, 8, Color(col, 0.7), 1.5, true)
 		var ws: WeaponState = weapons["secondary"]
 		if ws and ws.data.get("lob", false):
 			var tp := aim_dir * clampf(aim_dist, ws.data.get("min_range", 0.0), ws.data.range)
-			draw_arc(tp, 10, 0, TAU, 16, Color(1, 0.6, 0.3, 0.45), 1.0)
+			draw_arc(tp, 10, 0, TAU, 16, Color(1, 0.6, 0.3, 0.45), 1.0, true)
 		draw_circle(aim_dir * 70.0, 1.8, Color(col, 0.6))
-	# health bar
-	var bw := 26.0
-	var by := -r - 10.0
-	draw_rect(Rect2(Vector2(-bw / 2, by), Vector2(bw, 3)), Color(0, 0, 0, 0.6))
-	draw_rect(Rect2(Vector2(-bw / 2, by), Vector2(bw * hp_ratio(), 3)), Color(0.4, 1.0, 0.5) if hp_ratio() > 0.35 else Color(1, 0.35, 0.3))
-	# callsign
+	# health: slim bar + small label
+	var bw := 24.0
+	var by := -r - 12.0
+	draw_line(Vector2(-bw / 2, by), Vector2(bw / 2, by), Color(0, 0, 0, 0.55), 3.0)
+	draw_line(Vector2(-bw / 2, by), Vector2(-bw / 2 + bw * hp_ratio(), by), Color(0.45, 1.0, 0.6) if hp_ratio() > 0.35 else Color(1, 0.35, 0.3), 2.0)
 	var font := ThemeDB.fallback_font
-	draw_string(font, Vector2(-bw / 2, by - 3), callsign, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(col, 0.85))
+	draw_string(font, Vector2(-bw / 2, by - 4), callsign, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(col, 0.7))
 	# field work progress
 	var work := 0.0
 	for k in installing:
@@ -447,7 +532,7 @@ func _draw_body() -> void:
 	if repairing > 0.0:
 		work = 1.0 - repairing / PartsDB.REPAIR_TIME
 	if not installing.is_empty() or repairing > 0.0:
-		draw_arc(Vector2.ZERO, r + 4.0, -PI / 2, -PI / 2 + TAU * work, 24, Color(0.6, 1.0, 0.7, 0.9), 2.0)
+		draw_arc(Vector2.ZERO, r + 4.0, -PI / 2, -PI / 2 + TAU * work, 24, Color(0.6, 1.0, 0.7, 0.9), 2.0, true)
 	if overheated > 0.0 and int(Time.get_ticks_msec() / 150) % 2 == 0:
 		draw_string(font, Vector2(-20, r + 16), "OVERHEAT", HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1, 0.5, 0.3))
 	# repair beam

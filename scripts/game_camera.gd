@@ -11,8 +11,14 @@ var tac_blend := 0.0
 var look := Vector2.ZERO
 
 
+var field_zoom := ZOOM_FIELD
+
+
 func _ready() -> void:
-	zoom = Vector2.ONE * ZOOM_FIELD
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--zoom="):        # test hook: closer camera for screenshots
+			field_zoom = float(a.substr(7))
+	zoom = Vector2.ONE * field_zoom
 	position_smoothing_enabled = false
 
 
@@ -24,7 +30,7 @@ func _process(delta: float) -> void:
 	var tac_target := 1.0 if G.tactical else 0.0
 	tac_blend = move_toward(tac_blend, tac_target, delta * 3.5)
 	var e := ease(tac_blend, -2.0)
-	zoom = Vector2.ONE * lerpf(ZOOM_FIELD, ZOOM_TACTICAL, e)
+	zoom = Vector2.ONE * lerpf(field_zoom, ZOOM_TACTICAL, e)
 	var p := G.player
 	if p == null:
 		return

@@ -98,6 +98,17 @@ func paint(ci: CanvasItem) -> void:
 	for b in beacons:
 		if view.has_point(b[0]):
 			_radial(ci, b[0], b[1], Color(1.0, 0.72, 0.38) * b[2])
+	var t := Time.get_ticks_msec() / 1000.0
+	for lp in world.lamps:
+		var lpos: Vector2 = lp[0]
+		if not view.has_point(lpos):
+			continue
+		var fl: float = lp[3]
+		var seed := lpos.x * 0.013 + lpos.y * 0.007
+		var flick := 1.0 - fl * 0.5 * (0.5 + 0.5 * sin(t * 13.0 + seed * 9.0)) * (0.5 + 0.5 * sin(t * 3.7 + seed * 5.0))
+		if fl > 0.5 and fmod(t + seed * 3.0, 4.0) < 0.12:
+			flick *= 0.15                   # the odd brown-out on broken lamps
+		_radial(ci, lpos, lp[1], Color(lp[2]) * 0.75 * flick)
 	for m in mechs:
 		if not m.alive or not view.has_point(m.position):
 			continue

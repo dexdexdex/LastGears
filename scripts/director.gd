@@ -20,7 +20,7 @@ var horde_spawned := 0
 var horde_tick := 0.0
 var horde_dirs: Array = []
 var hordes := 0
-var max_enemies := 1000
+var max_enemies := 1600
 var rng := RandomNumberGenerator.new()
 var log_lines: Array = []       # debug history
 
@@ -33,7 +33,7 @@ func populate_zone() -> void:
 	## Dormant crawler fields scattered across the zone at the start of a leg.
 	var r := RandomNumberGenerator.new()
 	r.seed = G.world.rng.seed + 5
-	G.enemies.seed_dormant(int(G.world.W * G.world.H / 160.0) + G.threat * 40, G.world.start_c, r)
+	G.enemies.seed_dormant(int(G.world.W * G.world.H / 95.0) + G.threat * 60, G.world.start_c, r)
 
 
 func report_damage(amount: float, _m: Mech) -> void:
@@ -73,7 +73,7 @@ func _process_body(delta: float) -> void:
 			trickle_t -= delta
 			if trickle_t <= 0.0:
 				trickle_t = rng.randf_range(3.5, 6.5) / (1.0 + prog)
-				_spawn_pack(int((rng.randi_range(10, 18) + prog * 14.0) * (0.7 + 0.15 * G.threat)), prog, false)
+				_spawn_pack(int((rng.randi_range(16, 26) + prog * 20.0) * (0.7 + 0.15 * G.threat)), prog, false)
 			if t > build_len or intensity > 70.0:
 				_enter(Phase.PEAK)
 		Phase.PEAK:
@@ -81,7 +81,7 @@ func _process_body(delta: float) -> void:
 				horde_tick -= delta
 				if horde_tick <= 0.0:
 					horde_tick = 0.5
-					var n := mini(22, horde_budget - horde_spawned)
+					var n := mini(30, horde_budget - horde_spawned)
 					_spawn_pack(n, prog, true)
 					horde_spawned += n
 			elif t > 12.0 and G.enemies.count_near(G.squad_centroid(), 1100.0) < 4:
@@ -103,7 +103,7 @@ func _enter(p: int) -> void:
 		Phase.PEAK:
 			hordes += 1
 			var prog := G.world.progress_of(G.squad_centroid())
-			horde_budget = int((140 + hordes * 40 + prog * 120) * (0.6 + 0.2 * G.threat))
+			horde_budget = int((200 + hordes * 60 + prog * 160) * (0.6 + 0.2 * G.threat))
 			horde_spawned = 0
 			horde_tick = 2.5     # a beat of warning before they arrive
 			var base := rng.randf() * TAU

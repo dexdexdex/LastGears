@@ -16,6 +16,20 @@ var near := PackedByteArray()         # 1 = solid or touching solid (needs real 
 var buildings: Array = []             # Array[Rect2i] in cells
 var walls: Array = []                 # Array[Rect2i] settlement walls
 var plazas: Array = []               # [center px, radius px] open ground, no buildings
+var bkind: Array = []                 # parallel to buildings: draw style per rect
+var rounds: Array = []                # [center px, radius px, kind] round solids (tanks, trees)
+var water := PackedByteArray()        # 1 = shallow water (slows mechs)
+var biome := "dead city"
+var lamps: Array = []                 # [pos px, radius px, color, flicker 0..1] ambient light sources
+var pal := {}
+
+const BIOMES := {
+	"dead city": {"ambient": Color(0.045, 0.05, 0.055), "lamp": Color(0.75, 0.82, 0.95), "lamps": 2600, "ground": Color(0.15, 0.16, 0.13), "bldg": Color(0.085, 0.09, 0.085), "roof": Color(0.12, 0.125, 0.115), "edge": Color(0.30, 0.31, 0.27), "specks": 0.3, "craters": 1.0},
+	"industrial yards": {"ambient": Color(0.045, 0.042, 0.035), "lamp": Color(1.0, 0.62, 0.25), "lamps": 1500, "ground": Color(0.165, 0.165, 0.155), "bldg": Color(0.09, 0.095, 0.105), "roof": Color(0.15, 0.155, 0.165), "edge": Color(0.40, 0.38, 0.30), "accent": Color(0.62, 0.5, 0.14), "specks": 0.2, "craters": 0.6},
+	"flooded district": {"ambient": Color(0.05, 0.075, 0.1), "ground": Color(0.12, 0.145, 0.135), "bldg": Color(0.075, 0.085, 0.085), "roof": Color(0.11, 0.13, 0.13), "edge": Color(0.27, 0.33, 0.32), "water": Color(0.045, 0.09, 0.11), "specks": 0.25, "craters": 0.4},
+	"scrap fields": {"ambient": Color(0.05, 0.04, 0.03), "lamp": Color(1.0, 0.45, 0.15), "ground": Color(0.19, 0.16, 0.12), "bldg": Color(0.12, 0.10, 0.08), "roof": Color(0.18, 0.15, 0.11), "edge": Color(0.40, 0.31, 0.22), "accent": Color(0.55, 0.32, 0.16), "specks": 0.4, "craters": 3.0},
+	"dead forest": {"ambient": Color(0.025, 0.035, 0.03), "ground": Color(0.105, 0.125, 0.095), "bldg": Color(0.13, 0.11, 0.08), "roof": Color(0.26, 0.23, 0.17), "edge": Color(0.36, 0.38, 0.27), "specks": 0.45, "craters": 0.5},
+}
 var specks: Array = []                # ground texture [pos, size, shade]
 var craters: Array = []               # [pos, r]
 var start_zone := Rect2()             # px, settlement A interior
@@ -39,7 +53,9 @@ var from_name := "Outpost Gravel"
 var to_name := "Haven-7"
 
 
-func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String = "Haven-7", p_dir: Vector2 = Vector2.RIGHT) -> void:
+func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String = "Haven-7", p_dir: Vector2 = Vector2.RIGHT, p_biome: String = "dead city") -> void:
+	biome = p_biome if BIOMES.has(p_biome) else "dead city"
+	pal = BIOMES[biome]
 	from_name = p_from
 	to_name = p_to
 	rng.seed = seed_value
@@ -55,6 +71,8 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 	blocked.resize(W * H)
 	blocked.fill(0)
 	buildings.clear()
+	bkind.clear()
+	rounds.clear()
 	walls.clear()
 	for x in W:
 		_set_solid(x, 0)
@@ -86,41 +104,25 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 	start_pos = start_c + Vector2(gate_a) * CELL * 2.0
 	var area := W * H
 
-	# Plazas: open squares/rubble fields so the city isn't wall-to-wall blocks.
-	plazas.clear()
-	for i in area / 2000:
-		var pc := Vector2(rng.randf_range(12, W - 12), rng.randf_range(12, H - 12)) * CELL
-		plazas.append([pc, rng.randf_range(4.0, 8.5) * CELL])
-
-	# Buildings: random rects with a 2-cell gutter so heavy mechs fit between.
-	var tries := 0
-	while tries < area / 7 and buildings.size() < area / 85:
-		tries += 1
-		var bw := rng.randi_range(2, 7)
-		var bh := rng.randi_range(2, 6)
-		var bx := rng.randi_range(2, W - bw - 3)
-		var by := rng.randi_range(2, H - bh - 3)
-		var r := Rect2i(bx, by, bw, bh)
-		if _rect_ok(r, sa, sb):
-			buildings.append(r)
-			for cx in range(r.position.x, r.end.x):
-				for cy in range(r.position.y, r.end.y):
-					_set_solid(cx, cy)
+	water.resize(W * H)
+	water.fill(0)
+	_gen_biome(sa, sb, area)
+	_gen_lamps(area)
 
 	# Ground dressing.
 	specks.clear()
-	for i in int(area * 0.3):
+	for i in int(area * float(pal.specks)):
 		specks.append([Vector2(rng.randf() * W * CELL, rng.randf() * H * CELL),
 			rng.randf_range(1.0, 3.5), rng.randf_range(-0.05, 0.06)])
 	craters.clear()
-	for i in area / 150:
+	for i in int(area / 150 * float(pal.craters)):
 		var p := Vector2(rng.randf() * W * CELL, rng.randf() * H * CELL)
 		if not is_solid_at(p):
 			craters.append([p, rng.randf_range(10, 40)])
 
 	# Cache spots: free cells away from the start, biased toward building edges.
 	cache_spots.clear()
-	tries = 0
+	var tries := 0
 	while cache_spots.size() < area / 450 and tries < 12000:
 		tries += 1
 		var cx := rng.randi_range(4, W - 5)
@@ -142,6 +144,144 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 	_build_astar()
 	_build_map_texture()
 	_build_chunks()
+
+
+# ---------------------------------------------------------------- biomes
+
+func _gen_biome(sa: Rect2i, sb: Rect2i, area: int) -> void:
+	plazas.clear()
+	match biome:
+		"dead city":
+			_plazas(area / 2000)
+			_rects(area / 85, Vector2i(2, 7), Vector2i(2, 6), "bldg", sa, sb)
+		"industrial yards":
+			_plazas(area / 3500)
+			_rects(area / 260, Vector2i(6, 14), Vector2i(4, 8), "warehouse", sa, sb)
+			for i in area / 1100:   # pipe runs
+				if rng.randf() < 0.5:
+					_rects(1, Vector2i(9, 20), Vector2i(1, 1), "pipe", sa, sb)
+				else:
+					_rects(1, Vector2i(1, 1), Vector2i(9, 20), "pipe", sa, sb)
+			_rounds(area / 650, 1.4, 3.0, "tank", sa, sb)
+			_rects(area / 300, Vector2i(2, 3), Vector2i(1, 2), "crate", sa, sb)
+		"flooded district":
+			for i in area / 900:
+				var c := Vector2(rng.randf_range(6, W - 6), rng.randf_range(6, H - 6))
+				var rr := rng.randf_range(4.0, 11.0)
+				for x in range(int(c.x - rr), int(c.x + rr) + 1):
+					for y in range(int(c.y - rr), int(c.y + rr) + 1):
+						if x > 0 and y > 0 and x < W - 1 and y < H - 1 and Vector2(x, y).distance_to(c) < rr * rng.randf_range(0.85, 1.0):
+							if not sa.grow(2).has_point(Vector2i(x, y)) and not sb.grow(2).has_point(Vector2i(x, y)):
+								water[y * W + x] = 1
+			_plazas(area / 3000)
+			_rects(area / 150, Vector2i(2, 6), Vector2i(2, 5), "bldg", sa, sb)
+		"scrap fields":
+			_plazas(area / 1600)
+			for i in area / 220:   # piles: a hulk with debris around it
+				var c := Vector2i(rng.randi_range(4, W - 8), rng.randi_range(4, H - 8))
+				if _try_rect(Rect2i(c, Vector2i(rng.randi_range(3, 4), rng.randi_range(2, 3))), "hulk", sa, sb):
+					for k in 3:
+						var o := c + Vector2i(rng.randi_range(-7, 7), rng.randi_range(-6, 6))
+						_try_rect(Rect2i(o, Vector2i(rng.randi_range(1, 2), rng.randi_range(1, 2))), "scrap", sa, sb)
+		"dead forest":
+			_plazas(area / 1400)
+			_rounds(area / 26, 0.55, 1.35, "tree", sa, sb)
+			_rects(area / 900, Vector2i(2, 4), Vector2i(2, 3), "bldg", sa, sb)
+
+
+func _gen_lamps(area: int) -> void:
+	lamps.clear()
+	if not pal.has("lamp"):
+		return
+	if biome == "scrap fields":
+		# burning wrecks: fires at some of the hulks
+		for i in buildings.size():
+			if bkind[i] == "hulk" and rng.randf() < 0.45:
+				var c := (Vector2(buildings[i].position) + Vector2(buildings[i].size) * 0.5) * CELL
+				lamps.append([c, rng.randf_range(150.0, 230.0), pal.lamp, 0.8])
+		return
+	var n: int = area / int(pal.lamps)
+	var tries := 0
+	while lamps.size() < n and tries < n * 20:
+		tries += 1
+		var c2 := cell_center(Vector2i(rng.randi_range(3, W - 4), rng.randi_range(3, H - 4)))
+		if is_solid_at(c2) or not near_solid_at_gen(c2):
+			continue
+		var broken := rng.randf() < 0.35
+		lamps.append([c2, rng.randf_range(170.0, 260.0), pal.lamp, 0.9 if broken else 0.08])
+
+
+func near_solid_at_gen(p: Vector2) -> bool:
+	var c := to_cell(p)
+	for dx in [-1, 0, 1]:
+		for dy in [-1, 0, 1]:
+			if is_solid(c.x + dx, c.y + dy):
+				return true
+	return false
+
+
+func _plazas(n: int) -> void:
+	for i in n:
+		var pc := Vector2(rng.randf_range(12, W - 12), rng.randf_range(12, H - 12)) * CELL
+		plazas.append([pc, rng.randf_range(4.0, 8.5) * CELL])
+
+
+func _rects(n: int, wr: Vector2i, hr: Vector2i, kind: String, sa: Rect2i, sb: Rect2i) -> void:
+	var placed := 0
+	var tries := 0
+	while placed < n and tries < n * 9 + 20:
+		tries += 1
+		var bw := rng.randi_range(wr.x, wr.y)
+		var bh := rng.randi_range(hr.x, hr.y)
+		var r := Rect2i(rng.randi_range(2, W - bw - 3), rng.randi_range(2, H - bh - 3), bw, bh)
+		if _try_rect(r, kind, sa, sb):
+			placed += 1
+
+
+func _try_rect(r: Rect2i, kind: String, sa: Rect2i, sb: Rect2i) -> bool:
+	if r.position.x < 2 or r.position.y < 2 or r.end.x > W - 2 or r.end.y > H - 2:
+		return false
+	if not _rect_ok(r, sa, sb):
+		return false
+	buildings.append(r)
+	bkind.append(kind)
+	for cx in range(r.position.x, r.end.x):
+		for cy in range(r.position.y, r.end.y):
+			_set_solid(cx, cy)
+			water[cy * W + cx] = 0
+	return true
+
+
+func _rounds(n: int, rmin: float, rmax: float, kind: String, sa: Rect2i, sb: Rect2i) -> void:
+	var placed := 0
+	var tries := 0
+	while placed < n and tries < n * 6 + 20:
+		tries += 1
+		var rc := rng.randf_range(rmin, rmax)
+		var c := Vector2(rng.randf_range(3 + rc, W - 3 - rc), rng.randf_range(3 + rc, H - 3 - rc))
+		var bb := Rect2i(int(c.x - rc), int(c.y - rc), int(ceil(rc * 2.0)) + 1, int(ceil(rc * 2.0)) + 1)
+		if not _rect_ok(bb, sa, sb):
+			continue
+		var any := false
+		for x in range(bb.position.x, bb.end.x):
+			for y in range(bb.position.y, bb.end.y):
+				if Vector2(x + 0.5, y + 0.5).distance_to(c) <= rc + 0.25:
+					_set_solid(x, y)
+					water[y * W + x] = 0
+					any = true
+		if any:
+			buildings.append(bb)       # keeps the 2-cell gutter rule for later props
+			bkind.append("_round")
+			rounds.append([c * CELL, rc * CELL, kind])
+			placed += 1
+
+
+func in_water(p: Vector2) -> bool:
+	var cx := int(p.x / CELL)
+	var cy := int(p.y / CELL)
+	if cx < 0 or cy < 0 or cx >= W or cy >= H:
+		return false
+	return water[cy * W + cx] == 1
 
 
 func _side_of(d: Vector2) -> Vector2i:
@@ -459,10 +599,6 @@ func flow_dir(p: Vector2) -> Vector2:
 
 # ---------------------------------------------------------------- drawing
 
-const COL_GROUND := Color(0.15, 0.16, 0.13)
-const COL_BLDG := Color(0.085, 0.09, 0.085)
-const COL_ROOF := Color(0.12, 0.125, 0.115)
-const COL_EDGE := Color(0.30, 0.31, 0.27)
 const COL_WALL := Color(0.42, 0.28, 0.18)
 
 
@@ -494,10 +630,11 @@ func _build_chunks() -> void:
 
 
 func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
-	ci.draw_rect(rect, COL_GROUND)
+	var ground: Color = pal.ground
+	ci.draw_rect(rect, ground)
 	for sp in specks:
 		if rect.has_point(sp[0]):
-			var c := COL_GROUND.lightened(sp[2]) if sp[2] > 0 else COL_GROUND.darkened(-sp[2])
+			var c := ground.lightened(sp[2]) if sp[2] > 0 else ground.darkened(-sp[2])
 			ci.draw_rect(Rect2(sp[0], Vector2(sp[1], sp[1])), c)
 	for cr in craters:
 		if rect.has_point(cr[0]):
@@ -523,21 +660,105 @@ func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
 		pr.seed = int(pl[0].x * 31 + pl[0].y)
 		for k in 10:
 			var rp: Vector2 = pl[0] + Vector2.from_angle(pr.randf() * TAU) * pr.randf() * pl[1] * 0.8
-			ci.draw_rect(Rect2(rp, Vector2(pr.randf_range(3, 9), pr.randf_range(3, 7))), COL_EDGE.darkened(0.45))
-	# buildings (owned by the chunk containing their top-left corner)
-	for r in buildings:
+			ci.draw_rect(Rect2(rp, Vector2(pr.randf_range(3, 9), pr.randf_range(3, 7))), Color(pal.edge).darkened(0.45))
+	# shallow water
+	if pal.has("water"):
+		var wc: Color = pal.water
+		var c0 := Vector2i(int(rect.position.x / CELL), int(rect.position.y / CELL))
+		var c1 := Vector2i(int(ceil(rect.end.x / CELL)), int(ceil(rect.end.y / CELL)))
+		for cy in range(maxi(c0.y, 0), mini(c1.y, H)):
+			for cx in range(maxi(c0.x, 0), mini(c1.x, W)):
+				if water[cy * W + cx] == 1:
+					var wp := Vector2(cx, cy) * CELL
+					ci.draw_rect(Rect2(wp, Vector2(CELL, CELL)), wc)
+					if (cx * 7 + cy * 13) % 5 == 0:
+						ci.draw_arc(wp + Vector2(12, 12), 7.0, 0.3, 2.6, 6, Color(0.3, 0.45, 0.5, 0.25), 1.0)
+	# rect props (owned by the chunk containing their top-left corner)
+	var bl: Color = pal.bldg
+	var rf: Color = pal.roof
+	var ed: Color = pal.edge
+	for i in buildings.size():
+		var r: Rect2i = buildings[i]
+		var kind: String = bkind[i]
+		if kind == "_round":
+			continue
 		var rp := Rect2(Vector2(r.position) * CELL, Vector2(r.size) * CELL)
 		if not rect.has_point(rp.position):
 			continue
-		ci.draw_rect(rp.grow(3), Color(0, 0, 0, 0.35))
-		ci.draw_rect(rp, COL_BLDG)
-		ci.draw_rect(rp.grow(-5), COL_ROOF)
-		ci.draw_rect(rp, COL_EDGE, false, 1.5)
 		var hv := int(r.position.x * 7 + r.position.y * 13)
-		if hv % 3 == 0:
-			ci.draw_rect(Rect2(rp.position + Vector2(8, 8), Vector2(10, 6)), COL_EDGE.darkened(0.3))
-		if hv % 4 == 1:
-			ci.draw_line(rp.position + Vector2(6, rp.size.y - 6), rp.position + Vector2(rp.size.x - 6, 6), COL_BLDG, 3.0)
+		match kind:
+			"warehouse":
+				ci.draw_rect(rp.grow(3), Color(0, 0, 0, 0.35))
+				ci.draw_rect(rp, bl)
+				ci.draw_rect(rp.grow(-4), rf)
+				var ribs := int(rp.size.x / 18.0)
+				for k in range(1, ribs):
+					ci.draw_line(rp.position + Vector2(k * 18.0, 4), rp.position + Vector2(k * 18.0, rp.size.y - 4), bl.lightened(0.05), 1.0)
+				ci.draw_rect(rp, ed, false, 1.5)
+				ci.draw_rect(Rect2(rp.position + Vector2(0, rp.size.y - 5), Vector2(rp.size.x, 5)), Color(pal.accent, 0.5))
+			"pipe":
+				ci.draw_rect(rp.grow(2), Color(0, 0, 0, 0.3))
+				ci.draw_rect(rp.grow(-3), ed.darkened(0.2))
+				var horiz := rp.size.x > rp.size.y
+				var n := int((rp.size.x if horiz else rp.size.y) / 48.0)
+				for k in range(1, n + 1):
+					var off := k * 48.0
+					if horiz:
+						ci.draw_rect(Rect2(rp.position + Vector2(off - 3, 1), Vector2(6, rp.size.y - 2)), ed)
+					else:
+						ci.draw_rect(Rect2(rp.position + Vector2(1, off - 3), Vector2(rp.size.x - 2, 6)), ed)
+			"crate":
+				ci.draw_rect(rp.grow(-2), Color(pal.accent).darkened(0.45))
+				ci.draw_rect(rp.grow(-2), Color(pal.accent).darkened(0.1), false, 1.0)
+			"hulk":
+				var c := rp.get_center()
+				var pts := PackedVector2Array()
+				var hr := RandomNumberGenerator.new()
+				hr.seed = hv
+				for k in 7:
+					var a := TAU * k / 7.0
+					pts.append(c + Vector2(cos(a) * rp.size.x * 0.5, sin(a) * rp.size.y * 0.5) * hr.randf_range(0.75, 1.0))
+				ci.draw_colored_polygon(pts, bl)
+				pts.append(pts[0])
+				ci.draw_polyline(pts, ed, 1.5)
+				ci.draw_line(c - Vector2(rp.size.x * 0.3, 0), c + Vector2(rp.size.x * 0.45, -rp.size.y * 0.2), Color(pal.accent, 0.6), 3.0)
+			"scrap":
+				ci.draw_rect(rp.grow(-3), bl.lightened(0.05))
+				ci.draw_line(rp.position + Vector2(3, 3), rp.end - Vector2(3, 3), Color(pal.accent, 0.5), 2.0)
+			_:
+				ci.draw_rect(rp.grow(3), Color(0, 0, 0, 0.35))
+				ci.draw_rect(rp, bl)
+				ci.draw_rect(rp.grow(-5), rf)
+				ci.draw_rect(rp, ed, false, 1.5)
+				if hv % 3 == 0:
+					ci.draw_rect(Rect2(rp.position + Vector2(8, 8), Vector2(10, 6)), ed.darkened(0.3))
+				if hv % 4 == 1:
+					ci.draw_line(rp.position + Vector2(6, rp.size.y - 6), rp.position + Vector2(rp.size.x - 6, 6), bl, 3.0)
+	# round props
+	for rd in rounds:
+		var c2: Vector2 = rd[0]
+		if not rect.has_point(c2):
+			continue
+		var rr: float = rd[1]
+		match rd[2]:
+			"tank":
+				ci.draw_circle(c2 + Vector2(3, 4), rr + 2, Color(0, 0, 0, 0.35))
+				ci.draw_circle(c2, rr, bl)
+				ci.draw_arc(c2, rr, 0, TAU, 32, ed, 1.5)
+				ci.draw_arc(c2, rr * 0.62, 0, TAU, 28, rf, 2.0)
+				ci.draw_circle(c2, 3.0, Color(pal.accent, 0.7))
+			"tree":
+				var tr := RandomNumberGenerator.new()
+				tr.seed = int(c2.x * 13 + c2.y)
+				ci.draw_circle(c2 + Vector2(2, 3), rr * 0.8, Color(0, 0, 0, 0.3))
+				for k in 7:
+					var a2 := tr.randf() * TAU
+					var len := rr * tr.randf_range(0.9, 1.6)
+					var mid := c2 + Vector2.from_angle(a2) * len * 0.55
+					var tip := mid + Vector2.from_angle(a2 + tr.randf_range(-0.5, 0.5)) * len * 0.5
+					ci.draw_polyline(PackedVector2Array([c2, mid, tip]), Color(pal.roof).lightened(0.05), 1.5, true)
+				ci.draw_circle(c2, rr * 0.42, pal.bldg)
+				ci.draw_arc(c2, rr * 0.42, 0, TAU, 14, ed, 1.0, true)
 	# settlement walls and lights
 	for wr in walls:
 		for x in range(wr.position.x, wr.end.x):
@@ -571,4 +792,6 @@ func _build_map_texture() -> void:
 		for y in H:
 			if is_solid(x, y):
 				img.set_pixel(x, y, Color(0.4, 0.45, 0.36))
+			elif water[y * W + x] == 1:
+				img.set_pixel(x, y, Color(0.12, 0.22, 0.28))
 	map_texture = ImageTexture.create_from_image(img)

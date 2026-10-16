@@ -25,7 +25,11 @@ func _ready() -> void:
 	var to_n: Dictionary = G.atlas.nodes[camp.dest_idx]
 
 	var world := World.new()
-	world.generate(seed_value, from_n.name, to_n.name, G.atlas.leg_dir(camp.node_idx, camp.dest_idx))
+	var biome: String = camp.current_edge(G.atlas).terrain
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--biome="):
+			biome = a.substr(8).replace("_", " ")
+	world.generate(seed_value, from_n.name, to_n.name, G.atlas.leg_dir(camp.node_idx, camp.dest_idx), biome)
 	add_child(world)
 	G.world = world
 
@@ -38,14 +42,14 @@ func _ready() -> void:
 	add_child(enemies)
 	G.enemies = enemies
 
-	var mech_layer := Node2D.new()
-	add_child(mech_layer)
 
 	# Tracers and blasts draw above the darkness so they glow.
 	var glow_layer := CanvasLayer.new()
 	glow_layer.layer = 2
 	glow_layer.follow_viewport_enabled = true
 	add_child(glow_layer)
+	var mech_layer := Node2D.new()          # mechs read clearly above the darkness
+	glow_layer.add_child(mech_layer)
 	var projectiles := ProjectileManager.new()
 	glow_layer.add_child(projectiles)
 	G.projectiles = projectiles
@@ -57,6 +61,11 @@ func _ready() -> void:
 			continue
 		var d: Array = entry.def
 		var m := Mech.new()
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--weapons="):    # test hook: force weapons on every mech
+				var ws: PackedStringArray = a.substr(10).split(",")
+				entry.loadout.primary = ws[0]
+				entry.loadout.secondary = ws[1] if ws.size() > 1 else ""
 		m.setup(d[0], entry.pilot, d[3], entry.loadout.copy(), i == 0)
 		m.hp = maxf(1.0, m.max_hp * entry.hp_ratio)
 		m.position = world.start_pos + offsets[i]
@@ -101,7 +110,8 @@ func _ready() -> void:
 	mat.set_shader_parameter("lit", lighting.vp != null)
 	if lighting.vp:
 		mat.set_shader_parameter("light_tex", lighting.light_texture())
-	mat.set_shader_parameter("ambient", Vector3(Lighting.AMBIENT.r, Lighting.AMBIENT.g, Lighting.AMBIENT.b))
+	var amb: Color = world.pal.get("ambient", Lighting.AMBIENT)
+	mat.set_shader_parameter("ambient", Vector3(amb.r, amb.g, amb.b))
 
 	var hl := CanvasLayer.new()
 	hl.layer = 3
@@ -257,6 +267,15 @@ func _bot_screenshots() -> void:
 		G.view_mode = 2
 	elif t >= 44.0 and t < 44.5:
 		G.view_mode = 0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shot-times="):   # test hook: --shot-times=3,20 -> t3.png, t20.png
+			for ts in a.substr(13).split(","):
+				var key := "t" + ts
+				if t > float(ts) and not _shots_taken.has(key):
+					_shots_taken[key] = true
+					get_viewport().get_texture().get_image().save_png("%s/%s.png" % [dir, key])
+					print("[bot] screenshot %s" % key)
+			return
 	var want := {"01_field": t > 3.0, "02_refit": t > 28.0, "03_radar_far": t > 39.5, "05_overworld": t > 43.5,
 		"04_horde": _peak_seen_at > 0.0 and t > _peak_seen_at + 9.0}
 	for k in want:

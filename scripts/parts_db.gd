@@ -93,6 +93,42 @@ const WEAPONS := {
 		"cost": {"scrap": 5, "cells": 1},
 		"desc": "Short-range stream that burns through packed swarms.",
 	},
+	"railgun": {
+		"name": "Rail Driver", "short": "RAILGUN", "mode": "beam",
+		"dmg": 70.0, "rof": 0.75, "spread": 0.5, "speed": 0.0, "range": 780.0, "pellets": 1,
+		"splash": 0.0, "pierce": true, "lob": false,
+		"heat": 14.0, "power": 5, "weight": 9, "mag": 6, "reload": 3.0,
+		"color": Color(0.55, 0.85, 1.0), "width": 4.0,
+		"cost": {"scrap": 8, "circuits": 4, "cells": 2},
+		"desc": "Hypervelocity slug. Punches through every machine in a line, all the way to the wall.",
+	},
+	"arc": {
+		"name": "Arc Caster", "short": "ARC", "mode": "chain", "chains": 6, "chain_r": 125.0,
+		"dmg": 14.0, "rof": 3.2, "spread": 0.0, "speed": 0.0, "range": 320.0, "pellets": 1,
+		"splash": 0.0, "pierce": false, "lob": false,
+		"heat": 4.0, "power": 5, "weight": 5, "mag": 0, "reload": 0.0,
+		"color": Color(0.6, 0.72, 1.0), "width": 2.0,
+		"cost": {"circuits": 4, "cells": 2},
+		"desc": "Lightning that leaps between up to six machines. No ammo; power hungry.",
+	},
+	"cluster": {
+		"name": "Cluster Mortar", "short": "CLUSTER", "mode": "cluster", "bomblets": 7,
+		"dmg": 12.0, "rof": 0.7, "spread": 4.0, "speed": 360.0, "range": 620.0, "pellets": 1,
+		"splash": 46.0, "pierce": false, "lob": true, "min_range": 140.0,
+		"heat": 7.0, "power": 1, "weight": 9, "mag": 5, "reload": 5.0,
+		"color": Color(1.0, 0.62, 0.3), "width": 3.0,
+		"cost": {"scrap": 10, "circuits": 3},
+		"desc": "Lobbed shell that bursts into a carpet of bomblets. Swarm eraser.",
+	},
+	"swarm": {
+		"name": "Swarm Pod", "short": "SWARM", "mode": "homing", "turn": 5.5,
+		"dmg": 14.0, "rof": 6.0, "spread": 34.0, "speed": 330.0, "range": 640.0, "pellets": 1,
+		"splash": 30.0, "pierce": false, "lob": false,
+		"heat": 2.5, "power": 2, "weight": 7, "mag": 24, "reload": 4.0,
+		"color": Color(1.0, 0.82, 0.45), "width": 2.0,
+		"cost": {"scrap": 6, "circuits": 4, "cells": 1},
+		"desc": "Micro-missiles that hunt the nearest machine.",
+	},
 }
 
 # Module effect keys:

@@ -437,6 +437,8 @@ func _aim_and_fire() -> void:
 	var d: float = target.pos.distance_to(pos)
 	var ws_p: Mech.WeaponState = mech.weapons["primary"]
 	var spd: float = ws_p.data.speed if ws_p else 800.0
+	if spd <= 1.0:
+		spd = 1e6       # beams / arcs are instant
 	var lead: Vector2 = target.pos + target.vel * (d / spd)
 	mech.aim_dir = (lead - pos).normalized()
 	mech.aim_dist = d
