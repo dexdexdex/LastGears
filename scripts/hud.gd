@@ -67,6 +67,8 @@ func _draw() -> void:
 		var y := vs.y * 0.3
 		draw_rect(Rect2(0, y - 30, vs.x, 44), Color(0, 0, 0, 0.45 * a))
 		_txt(Vector2(0, y), banner_text, 26, Color(banner_color, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+	if G.game_state == "station":
+		return
 	if G.game_state != "play":
 		_draw_end(vs)
 	elif get_tree().paused:
@@ -207,7 +209,7 @@ func _draw_objective(vs: Vector2) -> void:
 	var goal := G.world.goal_zone.get_center()
 	var dist_km := p.position.distance_to(goal) / 24.0 * 6.0 / 1000.0   # 1 cell ≈ 6 m
 	var r := Rect2(vs.x * 0.5 - 200, 46, 400, 22)
-	_txt(Vector2(r.position.x, r.position.y + 14), "OBJECTIVE  Reach HAVEN-7  ·  %.2f km east" % dist_km, 12, C_AMBER, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	_txt(Vector2(r.position.x, r.position.y + 14), "OBJECTIVE  Reach %s  ·  %.2f km east  ·  %d cr" % [G.world.to_name.to_upper(), dist_km, G.campaign.credits], 12, C_AMBER, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 	# off-screen arrow
 	var view := G.camera.view_rect()
 	if not view.has_point(goal):
@@ -228,14 +230,14 @@ func _draw_map(vs: Vector2) -> void:
 	draw_rect(r.grow(8), Color(0, 0, 0, 0.75 * a))
 	draw_texture_rect(tex, r, false, Color(1, 1, 1, a))
 	draw_rect(r.grow(8), Color(C_LINE, a), false, 1.0)
-	_txt(r.position + Vector2(0, -12), "REGIONAL SURVEY — GRAVEL → HAVEN-7 CORRIDOR", 11, Color(C_TEXT, a))
+	_txt(r.position + Vector2(0, -12), "ZONE SURVEY — %s → %s" % [G.world.from_name.to_upper(), G.world.to_name.to_upper()], 11, Color(C_TEXT, a))
 	var k := scale / World.CELL
 	var sa := Rect2(r.position + G.world.start_zone.position * k, G.world.start_zone.size * k)
 	var sb := Rect2(r.position + G.world.goal_zone.position * k, G.world.goal_zone.size * k)
 	draw_rect(sa, Color(0.6, 0.8, 0.6, 0.7 * a), false, 1.5)
 	draw_rect(sb, Color(1, 0.8, 0.4, 0.9 * a), false, 1.5)
-	_txt(sa.position + Vector2(0, -3), "GRAVEL", 9, Color(0.6, 0.8, 0.6, a))
-	_txt(sb.position + Vector2(-10, -3), "HAVEN-7", 9, Color(1, 0.8, 0.4, a))
+	_txt(sa.position + Vector2(0, -3), G.world.from_name.to_upper(), 9, Color(0.6, 0.8, 0.6, a))
+	_txt(sb.position + Vector2(-30, -3), G.world.to_name.to_upper(), 9, Color(1, 0.8, 0.4, a))
 	for it in G.pickups.items:
 		if it.kind == "cache":
 			draw_rect(Rect2(r.position + it.pos * k - Vector2(1.5, 1.5), Vector2(3, 3)), Color(1, 0.8, 0.35, 0.8 * a))
@@ -383,14 +385,12 @@ func _draw_overworld(vs: Vector2) -> void:
 
 func _draw_end(vs: Vector2) -> void:
 	draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.55))
-	var won := G.game_state == "won"
-	var title := "HAVEN-7 REACHED" if won else "SIGNAL LOST"
-	var col := Color(1, 0.85, 0.45) if won else C_WARN
-	_txt(Vector2(0, vs.y * 0.42), title, 40, col, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	var alive := G.alive_squad().size()
-	var sub := "%d of %d mechs made it  ·  %d machines destroyed  ·  %d:%02d" % [alive, G.squad.size(), G.kills, int(G.game_time) / 60, int(G.game_time) % 60]
+	_txt(Vector2(0, vs.y * 0.42), "SIGNAL LOST", 40, C_WARN, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+	var camp: Campaign = G.campaign
+	var sub := "Vanguard down in %s · %d legs travelled · %d credits banked · %d machines destroyed this leg" % [
+		camp.current_edge(G.atlas).zone, camp.legs, camp.credits, G.kills]
 	_txt(Vector2(0, vs.y * 0.42 + 40), sub, 16, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	_txt(Vector2(0, vs.y * 0.42 + 72), "Press Enter / F5 to trudge again", 14, C_DIM, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+	_txt(Vector2(0, vs.y * 0.42 + 72), "Enter / F5: retry this leg from %s      N: new campaign" % G.world.from_name, 14, C_DIM, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 
 
 func _draw_crosshair(p: Vector2) -> void:

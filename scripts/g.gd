@@ -12,6 +12,10 @@ var director: Director
 var camera: GameCamera
 var hud: Hud
 var menu: FieldMenu
+var station: StationMenu
+var campaign: Campaign          # persists across legs (scene reloads)
+var threat := 1
+var leg_kills := {}
 var player: Mech
 var squad: Array = []          # all mechs incl. player
 var materials := {"scrap": 24, "circuits": 8, "cells": 5}
@@ -48,7 +52,7 @@ func _ready() -> void:
 func reset() -> void:
 	squad.clear()
 	radio.clear()
-	materials = {"scrap": 24, "circuits": 8, "cells": 5}
+	leg_kills = {}
 	game_time = 0.0
 	kills = 0
 	tactical = false
@@ -65,6 +69,8 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("pause") and game_state == "play" and not (menu and menu.open):
 		get_tree().paused = not get_tree().paused
 	if Input.is_action_just_pressed("restart"):
+		if game_state == "station":
+			return
 		get_tree().paused = false
 		get_tree().reload_current_scene()
 		return
@@ -177,6 +183,11 @@ func _setup_input() -> void:
 	_mouse("menu_accept", MOUSE_BUTTON_LEFT)
 	_button("menu_accept", [JOY_BUTTON_A])
 	_key("menu_back", [KEY_BACKSPACE])
+	_key("tab_left", [KEY_A, KEY_LEFT])
+	_button("tab_left", [JOY_BUTTON_LEFT_SHOULDER])
+	_key("tab_right", [KEY_D, KEY_RIGHT, KEY_TAB])
+	_button("tab_right", [JOY_BUTTON_RIGHT_SHOULDER])
+	_key("new_campaign", [KEY_N])
 	_mouse("menu_back", MOUSE_BUTTON_RIGHT)
 	_button("menu_back", [JOY_BUTTON_B])
 

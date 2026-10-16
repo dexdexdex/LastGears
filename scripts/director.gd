@@ -60,7 +60,7 @@ func _process(delta: float) -> void:
 			trickle_t -= delta
 			if trickle_t <= 0.0:
 				trickle_t = rng.randf_range(3.5, 6.5) / (1.0 + prog)
-				_spawn_pack(int(rng.randi_range(3, 6) + prog * 6.0), prog, false)
+				_spawn_pack(int((rng.randi_range(3, 6) + prog * 6.0) * (0.7 + 0.15 * G.threat)), prog, false)
 			if t > build_len or intensity > 70.0:
 				_enter(Phase.PEAK)
 		Phase.PEAK:
@@ -90,7 +90,7 @@ func _enter(p: int) -> void:
 		Phase.PEAK:
 			hordes += 1
 			var prog := G.world.progress_of(G.squad_centroid())
-			horde_budget = int(36 + hordes * 10 + prog * 45)
+			horde_budget = int((36 + hordes * 10 + prog * 45) * (0.6 + 0.2 * G.threat))
 			horde_spawned = 0
 			horde_tick = 2.5     # a beat of warning before they arrive
 			var base := rng.randf() * TAU
@@ -120,7 +120,7 @@ func _spawn_pack(n: int, prog: float, horde: bool) -> void:
 		var p := G.world.nearest_free(origin + Vector2(rng.randf_range(-50, 50), rng.randf_range(-50, 50)))
 		G.enemies.spawn(type, p)
 	if horde and horde_spawned == 0:
-		var wardens := 1 + hordes / 2
+		var wardens := 1 + hordes / 2 + (1 if G.threat >= 4 else 0)
 		for i in wardens:
 			G.enemies.spawn("warden", G.world.nearest_free(origin + Vector2(rng.randf_range(-40, 40), rng.randf_range(-40, 40))))
 

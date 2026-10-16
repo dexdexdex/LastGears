@@ -31,7 +31,13 @@ const FLOW_INF := 1 << 28
 var map_texture: ImageTexture
 
 
-func generate(seed_value: int) -> void:
+var from_name := "Outpost Gravel"
+var to_name := "Haven-7"
+
+
+func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String = "Haven-7") -> void:
+	from_name = p_from
+	to_name = p_to
 	rng.seed = seed_value
 	blocked.resize(W * H)
 	blocked.fill(0)
@@ -370,8 +376,8 @@ func _draw() -> void:
 					draw_rect(Rect2(Vector2(x, y) * CELL, Vector2(CELL, CELL)), COL_WALL.darkened(0.35))
 					draw_rect(Rect2(Vector2(x, y) * CELL, Vector2(CELL, CELL)).grow(-4), COL_WALL)
 	var font := ThemeDB.fallback_font
-	_draw_settlement(start_zone, "OUTPOST GRAVEL — DEPARTED", Color(0.7, 0.8, 0.6), font)
-	_draw_settlement(goal_zone, "HAVEN-7 — DESTINATION", Color(1.0, 0.82, 0.45), font)
+	_draw_settlement(start_zone, "%s — DEPARTED" % from_name.to_upper(), Color(0.7, 0.8, 0.6), font)
+	_draw_settlement(goal_zone, "%s — DESTINATION" % to_name.to_upper(), Color(1.0, 0.82, 0.45), font)
 
 
 func _draw_settlement(z: Rect2, label: String, col: Color, font: Font) -> void:

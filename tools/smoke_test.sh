@@ -16,10 +16,10 @@ echo "== 1. fresh launch, no import (what you get after git clone / pull)"
 OUT1="$(timeout 120 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 600 -- --bot --seed=1 2>&1)"
 E1="$(echo "$OUT1" | grep -E "SCRIPT ERROR|^ERROR|Parse Error" )"
 
-echo "== 2. 2-minute simulated playthrough"
-OUT2="$(timeout 300 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 7200 -- --bot --seed=7 2>&1)"
+echo "== 2. 2.5-minute simulated playthrough (reaches a station and departs)"
+OUT2="$(timeout 300 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 9000 -- --bot --seed=7 2>&1)"
 E2="$(echo "$OUT2" | grep -E "SCRIPT ERROR|^ERROR|Parse Error" )"
-echo "$OUT2" | grep -E "\[director\]|WON|refit done" | head -8
+echo "$OUT2" | grep -E "\[director\]|ARRIVED|DEPART|LEG|refit done" | head -12
 
 echo "== 3. committed class cache is up to date"
 STALE=""

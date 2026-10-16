@@ -192,7 +192,7 @@ func _label_edges() -> void:
 	var cur: Dictionary = edges[current_edge]
 	cur.zone = "Ash Sprawl"
 	cur.terrain = "dead city"
-	cur.threat = maxi(cur.threat, 2)
+	cur.threat = 2          # the opening leg is a gentle one
 
 
 func current() -> Dictionary:

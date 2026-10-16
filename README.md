@@ -47,7 +47,25 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Toggle satellite filter | F2 | |
 | Restart | F5 | |
 
-## The vertical slice
+## The campaign
+
+Travel station to station across the region. Each leg is a fresh zone between
+two nodes on the region map; reaching the far gate takes you inside the walls:
+
+- **HANGAR** – swap gear on any squad mech from your spare-parts inventory
+  (instant and free; removed parts go back to spares).
+- **MARKET** – sell/buy scrap, circuits and cells (prices vary by station),
+  buy parts, sell spares. Ruins have no traders.
+- **REPAIRS** – hull damage carries between legs; havens repair cheaper and can
+  hire a replacement pilot for a fallen squadmate (fresh random weapons).
+- **DEPART** – choose the next route: destination, zone, threat, payout.
+
+Credits come from a delivery fee on arrival (scales with zone threat) plus
+bounties for machines destroyed. Zones get harder with threat and with legs
+travelled. Lose your Vanguard and you can retry the leg from the last station
+(Enter / F5) or start a new campaign (N).
+
+## The first leg
 
 Get from **Outpost Gravel** (west) to **Haven-7** (east) through a dead city of
 ruined blocks and rubble plazas. Every run rolls fresh weapons for every mech
@@ -105,6 +123,8 @@ scripts/
   projectile_manager.gd bullets, rockets, mortar shells, explosions, fx
   director.gd           L4D-style pacing
   atlas.gd              region network (havens, hives, zones) for the region map
+  campaign.gd           persistent run state: location, credits, materials, spares, squad
+  station_menu.gd       station screen: hangar, market, repairs, depart
   field_menu.gd         real-time refit UI
   hud.gd                HUD, tactical corridor map, end screen
   tactical_overlay.gd   world-space markers in tactical view

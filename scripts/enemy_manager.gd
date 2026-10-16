@@ -55,7 +55,8 @@ func spawn(type: String, pos: Vector2) -> Enemy:
 	e.type = type
 	e.d = TYPES[type]
 	e.pos = pos
-	e.hp = e.d.hp * (1.0 + G.world.progress_of(pos) * 0.4)
+	var legs: int = G.campaign.legs if G.campaign else 0
+	e.hp = e.d.hp * (1.0 + G.world.progress_of(pos) * 0.4) * (1.0 + legs * 0.08)
 	e.max_hp = e.hp
 	e.r = e.d.r
 	e.jitter = randf_range(0.85, 1.15)
@@ -241,6 +242,7 @@ func kill(e: Enemy, by: Mech) -> void:
 		return
 	e.alive = false
 	G.kills += 1
+	G.leg_kills[e.type] = int(G.leg_kills.get(e.type, 0)) + 1
 	if by:
 		by.kills += 1
 		if by.brain:

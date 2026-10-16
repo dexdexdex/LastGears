@@ -1,15 +1,6 @@
 extends Node2D
 ## Builds the vertical slice: world, squad, managers, camera, HUD.
 
-const SQUAD := [
-	# callsign, pilot, personality, color, chassis, primary, secondary, modules
-	# (weapons are re-rolled each run by _random_loadout; these are fallbacks)
-	["VANGUARD", "You", "", Color(0.45, 0.85, 1.0), "vanguard", "autocannon", "rockets", ["heat_sink", "targeting"]],
-	["ROOK", "Ilya Rooker", "rook", Color(1.0, 0.55, 0.35), "bulwark", "flak", "rockets", ["armor_plate", "heat_sink", "ammo_rack"]],
-	["WREN", "Sade Okonkwo", "wren", Color(0.75, 0.95, 0.45), "kestrel", "laser", "mortar", ["targeting", "reactor"]],
-	["MAGS", "Magda Vell", "mags", Color(0.9, 0.7, 1.0), "sparrow", "gatling", "", ["repair_drone", "shield", "heat_sink"]],
-]
-
 var filter_rect: ColorRect
 var bot_report_t := 0.0
 
@@ -19,14 +10,23 @@ func _ready() -> void:
 	G.reset()
 	if G.atlas == null:
 		G.atlas = Atlas.new()
-	randomize()
-	var seed_value := randi()
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--seed="):
-			seed_value = int(a.substr(7))
+	if G.campaign == null:
+		randomize()
+		var cseed := randi()
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--seed="):
+				cseed = int(a.substr(7))
+		G.campaign = Campaign.new(G.atlas, cseed)
+	var camp: Campaign = G.campaign
+	camp.sync_atlas(G.atlas)
+	G.materials = camp.materials.duplicate()
+	G.threat = camp.threat(G.atlas)
+	var seed_value := camp.leg_seed
+	var from_n: Dictionary = G.atlas.nodes[camp.node_idx]
+	var to_n: Dictionary = G.atlas.nodes[camp.dest_idx]
 
 	var world := World.new()
-	world.generate(seed_value)
+	world.generate(seed_value, from_n.name, to_n.name)
 	add_child(world)
 	G.world = world
 
@@ -46,13 +46,15 @@ func _ready() -> void:
 	add_child(projectiles)
 	G.projectiles = projectiles
 
-	var loadout_rng := RandomNumberGenerator.new()
-	loadout_rng.seed = seed_value + 99
 	var offsets := [Vector2.ZERO, Vector2(-40, -45), Vector2(-60, 45), Vector2(-90, 0)]
-	for i in SQUAD.size():
-		var d: Array = SQUAD[i]
+	for i in camp.squad.size():
+		var entry: Dictionary = camp.squad[i]
+		if not entry.alive:
+			continue
+		var d: Array = entry.def
 		var m := Mech.new()
-		m.setup(d[0], d[1], d[3], _random_loadout(d, loadout_rng), i == 0)
+		m.setup(d[0], entry.pilot, d[3], entry.loadout.copy(), i == 0)
+		m.hp = maxf(1.0, m.max_hp * entry.hp_ratio)
 		m.position = world.start_pos + offsets[i]
 		mech_layer.add_child(m)
 		G.squad.append(m)
@@ -98,41 +100,36 @@ func _ready() -> void:
 	var menu := FieldMenu.new()
 	hl.add_child(menu)
 	G.menu = menu
+	var station := StationMenu.new()
+	hl.add_child(station)
+	G.station = station
 
-	G.say("", "Left Outpost Gravel. Haven-7 is east, through the dead city.", Color(0.7, 0.8, 0.7))
-	G.say("WREN", "Scanners are quiet. Won't stay that way.", SQUAD[2][3].lightened(0.3))
+	var edge := camp.current_edge(G.atlas)
+	G.say("", "Leg %d: %s → %s through %s (threat %d/5)." % [camp.legs + 1, from_n.name, to_n.name, edge.zone, edge.threat], Color(0.7, 0.8, 0.7))
+	var chatter := ["Scanners are quiet. Won't stay that way.", "Keep it tight. Long walk ahead.", "Eyes open. This zone's got teeth.", "Another day, another dead city."]
+	var talker: Mech = G.squad[G.squad.size() - 1]
+	if talker != G.player:
+		G.say(talker.callsign, chatter[camp.legs % chatter.size()], talker.color.lightened(0.3))
 	for mm in G.squad:
-		G.say("", "%s armed: %s / %s" % [mm.callsign, PartsDB.WEAPONS[mm.loadout.primary]["short"], PartsDB.WEAPONS[mm.loadout.secondary]["short"]], mm.color.darkened(0.1))
+		G.say("", "%s armed: %s / %s" % [mm.callsign, PartsDB.part(mm.loadout.primary).get("short", "—"), PartsDB.part(mm.loadout.secondary).get("short", "—")], mm.color.darkened(0.1))
+	if G.bot_mode and "--station" in OS.get_cmdline_user_args() and camp.legs == 0:
+		_arrive.call_deferred()      # test hook: jump straight to the first station
 	if G.bot_mode:
-		print("[bot] seed %d, caches %d, buildings %d" % [seed_value, world.cache_spots.size(), world.buildings.size()])
-
-
-func _random_loadout(d: Array, rng: RandomNumberGenerator) -> Loadout:
-	## Keep each frame's role modules, roll two different weapons that fit
-	## within the frame's weight limit (+1 grace).
-	var ids: Array = PartsDB.WEAPONS.keys()
-	var best: Loadout = Loadout.new(d[4], d[5], d[6], d[7])
-	for attempt in 60:
-		var p: String = ids[rng.randi() % ids.size()]
-		var s: String = ids[rng.randi() % ids.size()]
-		if s == p:
-			continue
-		var lo := Loadout.new(d[4], p, s, d[7])
-		var st := lo.compute()
-		if st.weight <= st.max_weight + 1:
-			return lo
-		best = lo
-	# Nothing fit: shed modules until it does.
-	for i in range(best.modules.size() - 1, -1, -1):
-		if best.compute().weight <= best.compute().max_weight + 1:
-			break
-		best.modules[i] = ""
-	return best
+		print("[bot] LEG %d %s -> %s threat %d seed %d squad %d credits %d" % [camp.legs + 1, from_n.name, to_n.name, edge.threat, seed_value, G.squad.size(), camp.credits])
 
 
 func _process(delta: float) -> void:
-	if G.game_state != "play":
-		if Input.is_action_just_pressed("open_menu") or Input.is_action_just_pressed("pause"):
+	if G.game_state == "station":
+		return
+	if G.game_state == "lost":
+		if G.bot_mode:
+			print("[bot] LOST leg %d at %.1fs — retrying" % [G.campaign.legs + 1, G.game_time])
+			get_tree().reload_current_scene()
+			return
+		if Input.is_action_just_pressed("pause"):
+			get_tree().reload_current_scene()        # retry this leg
+		elif Input.is_action_just_pressed("new_campaign"):
+			G.campaign = null
 			get_tree().reload_current_scene()
 		return
 	if Input.is_action_just_pressed("toggle_director"):
@@ -155,10 +152,7 @@ func _process(delta: float) -> void:
 		_bot_screenshots()
 
 	if G.player.alive and G.world.goal_zone.has_point(G.player.position):
-		G.game_state = "won"
-		G.announce("HAVEN-7 — GATES OPENING", Color(1, 0.85, 0.45))
-		if G.bot_mode:
-			print("[bot] WON at %.1fs kills=%d alive=%d" % [G.game_time, G.kills, G.alive_squad().size()])
+		_arrive()
 
 	if G.bot_mode:
 		_bot_refit_test()
@@ -172,6 +166,31 @@ func _process(delta: float) -> void:
 				G.game_time, Engine.get_frames_per_second(), G.world.progress_of(G.player.position) * 100,
 				G.enemies.alive_count(), Director.PHASE_NAMES[G.director.phase], G.director.intensity,
 				str(G.materials), ", ".join(states)])
+
+
+func _arrive() -> void:
+	var camp: Campaign = G.campaign
+	var summary := camp.arrive(G.atlas, G.squad, G.materials, G.leg_kills)
+	G.materials = camp.materials.duplicate()
+	G.game_state = "station"
+	G.menu.open = false
+	G.view_mode = 0
+	get_tree().paused = true
+	G.station.open_station(summary)
+	if G.bot_mode:
+		print("[bot] ARRIVED %s at %.1fs (leg %d) kills=%d alive=%d +%d delivery +%d bounty credits=%d" % [
+			G.atlas.nodes[camp.node_idx].name, G.game_time, camp.legs, G.kills, G.alive_squad().size(),
+			summary.delivery, summary.bounty, camp.credits])
+		_bot_shot("06_station")
+
+
+func _bot_shot(name: String) -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shots="):
+			await get_tree().process_frame
+			await get_tree().process_frame
+			get_viewport().get_texture().get_image().save_png("%s/%s.png" % [a.substr(8), name])
+			print("[bot] screenshot %s" % name)
 
 
 var _shots_taken := {}
