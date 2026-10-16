@@ -223,27 +223,32 @@ func _gallery() -> void:
 	var sx := 120.0
 	var sy := 92.0
 	var origin := Vector2(-sx * 1.5, -sy * 1.5)
+	var styles: Array = range(Mech.STYLE_NAMES.size())
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--gallery-styles="):
+			styles = Array(a.substr(17).split(",")).map(func(x): return int(x))
 	var labels := Node2D.new()
 	add_child(labels)
 	labels.draw.connect(func():
-		for si in Mech.STYLE_NAMES.size():
-			labels.draw_string(font, origin + Vector2(-sx * 0.95, si * sy + 4), "%d  %s" % [si + 1, Mech.STYLE_NAMES[si]], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 0.8))
+		for row in styles.size():
+			labels.draw_string(font, origin + Vector2(-sx * 0.95, row * sy + 4), "%d  %s" % [styles[row] + 1, Mech.STYLE_NAMES[styles[row]]], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 0.8))
 		for ci in frames.size():
 			labels.draw_string(font, origin + Vector2(ci * sx - 24, -sy * 0.55), frames[ci][4], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, frames[ci][5]))
-	for si in Mech.STYLE_NAMES.size():
+	for row in styles.size():
+		var si: int = styles[row]
 		for ci in frames.size():
 			var f: Array = frames[ci]
 			var m := Mech.new()
 			m.setup(f[4], "", f[5], Loadout.new(f[0], f[1], f[2], f[3]), false)
 			m.style_override = si
-			m.position = origin + Vector2(ci * sx, si * sy)
+			m.position = origin + Vector2(ci * sx, row * sy)
 			m.facing = Vector2.from_angle(-0.35 + ci * 0.25)
 			m.aim_dir = Vector2.from_angle(-0.6 + ci * 0.35)
 			m.walk_phase = ci * 1.3
 			add_child(m)
 	var cam := Camera2D.new()
-	cam.zoom = Vector2.ONE * 2.1
-	cam.position = origin + Vector2(sx * 1.2, sy * 1.5)
+	cam.zoom = Vector2.ONE * minf(2.1, 820.0 / ((styles.size() + 0.6) * sy))
+	cam.position = origin + Vector2(sx * 1.2, sy * (styles.size() - 1) * 0.5 - sy * 0.15)
 	add_child(cam)
 	cam.make_current()
 	for a in OS.get_cmdline_user_args():
