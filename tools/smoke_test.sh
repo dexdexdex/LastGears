@@ -21,14 +21,22 @@ OUT2="$(timeout 300 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 900
 E2="$(echo "$OUT2" | grep -E "SCRIPT ERROR|^ERROR|Parse Error" )"
 echo "$OUT2" | grep -E "\[director\]|ARRIVED|DEPART|LEG|refit done" | head -12
 
-echo "== 3. committed class cache is up to date"
+echo "== 3. station flow: arrive, market, hangar, repairs, depart, next leg starts"
+OUT3="$(timeout 120 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 600 -- --bot --seed=3 --station 2>&1)"
+E3="$(echo "$OUT3" | grep -E "SCRIPT ERROR|^ERROR|Parse Error" )"
+echo "$OUT3" | grep -E "ARRIVED|market|hangar|repairs|DEPART|LEG 2" | head -8
+if ! echo "$OUT3" | grep -q "LEG 2"; then E3="$E3
+station flow never started leg 2"; fi
+
+echo "== 4. committed class cache is up to date"
 STALE=""
 if ! git diff --quiet -- .godot/global_script_class_cache.cfg; then STALE="yes"; fi
 
-if [ -n "$E1$E2" ] || [ -n "$STALE" ]; then
+if [ -n "$E1$E2$E3" ] || [ -n "$STALE" ]; then
   echo "FAIL"
   [ -n "$E1" ] && echo "-- fresh launch errors:" && echo "$E1" | sort -u | head -30
   [ -n "$E2" ] && echo "-- playthrough errors:" && echo "$E2" | sort -u | head -30
+  [ -n "$E3" ] && echo "-- station flow errors:" && echo "$E3" | sort -u | head -30
   [ -n "$STALE" ] && echo "-- .godot/global_script_class_cache.cfg is stale: run the game/editor once and commit it"
   exit 1
 fi
