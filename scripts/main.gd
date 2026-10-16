@@ -207,15 +207,22 @@ func _process(delta: float) -> void:
 			var parts: Array = []
 			for k in G.prof_avg:
 				parts.append("%s %.2f" % [k, G.prof_avg[k]])
-			print("[prof] frame %.2f ms draws %d thinks %d (packs %d of %d) budget_hits %d | %s" % [G.fps_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), G.enemies.thinks_frame, G.enemies.pack_thinks, G.enemies.pack_list.size(), G.enemies.budget_hits, ", ".join(parts)])
+			print("[prof] frame %.2f ms draws %d thinks %d (packs %d of %d) virtual %d budget_hits %d | %s" % [G.fps_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), G.enemies.thinks_frame, G.enemies.pack_thinks, G.enemies.pack_list.size(), G.enemies.virtual_count, G.enemies.budget_hits, ", ".join(parts)])
 
 
 func _stress(n: int) -> void:
 	G.god = true
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--stress-far="):
+			G.stress_far = int(a.substr(13))
 	var c: Vector2 = G.player.position
 	for i in n:
-		var p := c + Vector2.from_angle(randf() * TAU) * randf_range(260.0, 1600.0)
+		var p := c + Vector2.from_angle(randf() * TAU) * randf_range(260.0, float(G.stress_far))
+		var sz := G.world.size_px()
+		p = Vector2(clampf(p.x, 60.0, sz.x - 60.0), clampf(p.y, 60.0, sz.y - 60.0))
 		p = G.world.nearest_free(p)
+		if G.world.is_solid_at(p):
+			continue
 		var r := randf()
 		G.enemies.spawn("crawler" if r < 0.9 else ("skitter" if r < 0.98 else "spitter"), p)
 	print("[stress] %d awake machines" % n)

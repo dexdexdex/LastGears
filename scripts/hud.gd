@@ -84,13 +84,14 @@ var awake_prev := 0.0
 
 func _radar_scan(lst: Array, c: Vector2, rng: float, prev: float, cur: float) -> void:
 	for e in lst:
-		var v: Vector2 = e.pos - c
+		var ep: Vector2 = G.enemies.pos_of(e)
+		var v: Vector2 = ep - c
 		if v.length_squared() > rng * rng:
 			continue
 		var a := fposmod(v.angle(), TAU)
 		var hit := (a > prev and a <= cur) if cur >= prev else (a > prev or a <= cur)
 		if hit:
-			blips[e] = [e.pos, G.game_time, e.type == "warden"]
+			blips[e] = [ep, G.game_time, e.type == "warden"]
 
 
 func _radar_update_body(delta: float) -> void:
@@ -449,7 +450,7 @@ func _draw_map(vs: Vector2) -> void:
 			ci.draw_rect(Rect2(r.position + it.pos * k - Vector2(1.5, 1.5), Vector2(3, 3)), Color(1, 0.8, 0.35, 0.8 * a))
 	for lst in [G.enemies.list, G.enemies.sleepers]:
 		for e in lst:
-			ci.draw_rect(Rect2(r.position + e.pos * k - Vector2(1, 1), Vector2(2, 2)), Color(e.d.color, 0.8 * a))
+			ci.draw_rect(Rect2(r.position + G.enemies.pos_of(e) * k - Vector2(1, 1), Vector2(2, 2)), Color(e.d.color, 0.8 * a))
 	for m in G.squad:
 		if m.alive:
 			ci.draw_circle(r.position + m.position * k, 3.0 if m.is_player else 2.2, Color(m.color, a))

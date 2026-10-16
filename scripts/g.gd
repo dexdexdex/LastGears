@@ -42,6 +42,7 @@ var show_profiler := false
 var render_fast := true
 var think_budget_ms := 1.2  # swarm AI time per frame; [perf] think_budget_ms in user://settings.cfg
 var show_packs := false     # F4: outline swarm packs
+var stress_far := 1600       # --stress-far=: spawn radius for --stress
 var god := false           # --stress: squad takes no damage
 var mech_style := 4          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
 const SETTINGS := "user://settings.cfg"

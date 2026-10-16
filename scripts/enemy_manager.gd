@@ -58,6 +58,7 @@ class Enemy:
 	var seen_t := -99.0
 	var bi := -1               # bucket this machine is filed in (-1 = none)
 	var pack = null            # Pack it moves with (null = thinks for itself)
+	var base := Vector2.ZERO   # pack drift when this machine last had a real position
 
 # Packs: crawlers and skitters away from the squad are run as groups. Every
 # machine in the same grid cell shares one decision (target, line of sight,
@@ -76,6 +77,12 @@ class Pack:
 	var next_think := 0.0
 	var last_think := 0.0
 	var dir := Vector2.ZERO    # shared heading for big (far) packs
+	# Virtual packs: far off screen the members don't move at all; the pack
+	# carries a single drift vector (one wall test per step) and a member's
+	# real position is pos + (drift - base), worked out when it's needed.
+	var virtual := false
+	var drift := Vector2.ZERO
+	var speed := 36.0
 
 const PACKABLE := {"crawler": true, "skitter": true}
 const PACK_SOLO := 300.0   # closer than this to the squad: individual
@@ -84,6 +91,9 @@ var pack_list: Array = []
 var pack_cursor := 0
 var squad_c := Vector2.ZERO
 var pack_thinks := 0       # stats: pack decisions last frame
+var virtual_count := 0     # stats: machines riding in virtual packs
+const VIRTUAL_DIST := 1000.0   # pack anchor at least this far from the squad...
+const VIRTUAL_MARGIN := 350.0  # ...and this far outside the view
 
 const WAKE_R := 300.0
 const SEP_OX := [0, -1, 1, 0, 0, -1, 1, -1, 1]   # own bucket first
@@ -211,6 +221,8 @@ func _process_body(delta: float) -> void:
 		var e: Enemy = list[i]
 		if not e.alive:
 			continue
+		if e.pack != null and e.pack.virtual:
+			continue           # the pack moves for it
 		if PACKABLE.has(e.type):
 			_assign_pack(e)
 			if e.pack != null:
@@ -224,6 +236,16 @@ func _process_body(delta: float) -> void:
 				continue
 		if not onscreen.has_point(e.pos):
 			_move(e, think_dt)
+	# Virtual packs step on the same slice schedule as off-screen machines.
+	var far_view := onscreen.grow(VIRTUAL_MARGIN)
+	var vc := 0
+	for j in range(think_slice, pack_list.size(), k):
+		var vp: Pack = pack_list[j]
+		if vp.virtual:
+			_step_virtual(vp, think_dt, far_view)
+		vc += vp.members.size() if vp.virtual else 0
+	if think_slice == 0:
+		virtual_count = vc * k     # rough; refreshed once per slice cycle
 	# Packs: one decision steers every member. Shares the same budget.
 	var pc := 0
 	var np := pack_list.size()
@@ -241,6 +263,7 @@ func _process_body(delta: float) -> void:
 		if now < pk.next_think:
 			continue
 		_think_pack(pk, now, alive_mechs, onscreen)
+		_update_virtual(pk, far_view)
 		pc += 1
 		cnt += 1
 		if Time.get_ticks_usec() > t_end:
@@ -328,10 +351,13 @@ func _assign_pack(e: Enemy) -> void:
 		pack_list.append(pk)
 	pk.members.append(e)
 	e.pack = pk
+	e.base = pk.drift
 
 
 func _leave_pack(e: Enemy) -> void:
 	var pk: Pack = e.pack
+	if pk != null and pk.virtual:
+		e.pos = pos_of(e)
 	e.pack = null
 	if pk != null:
 		pk.members.erase(e)
@@ -346,7 +372,7 @@ func _think_pack(pk: Pack, now: float, mechs: Array, _onscreen: Rect2) -> void:
 	## One decision for the whole pack, constant cost however big it is:
 	## target, line of sight and heading are taken from the cell centre.
 	pk.last_think = now
-	var c := Vector2((pk.key.x + 0.5) * pk.key.z, (pk.key.y + 0.5) * pk.key.z)
+	var c := pk.center if pk.virtual else Vector2((pk.key.x + 0.5) * pk.key.z, (pk.key.y + 0.5) * pk.key.z)
 	pk.center = c
 	pk.radius = pk.key.z * 0.6
 	var best: Mech = null
@@ -364,6 +390,59 @@ func _think_pack(pk: Pack, now: float, mechs: Array, _onscreen: Rect2) -> void:
 	var d := (best.position - c).normalized() if pk.los else G.world.flow_dir(c)
 	pk.dir = d if d != Vector2.ZERO else (best.position - c).normalized()
 	pk.next_think = now + clampf(pk.dist / THINK_FAR, THINK_MIN, THINK_MAX) * randf_range(0.9, 1.1)
+	var sp := 0.0
+	for m in pk.members:
+		sp += m.d.speed
+	pk.speed = sp / maxi(1, pk.members.size())
+
+
+func _update_virtual(pk: Pack, far_view: Rect2) -> void:
+	var far := pk.key.z == 256 and pk.dist > VIRTUAL_DIST and not far_view.has_point(pk.center)
+	if far and not pk.virtual and not pk.members.is_empty():
+		pk.virtual = true
+		var cen := Vector2.ZERO
+		for m in pk.members:
+			m.base = pk.drift
+			m.vel = Vector2.ZERO
+			cen += m.pos
+			_unfile(m)         # out of the grid: nothing near enough to touch them
+		pk.center = G.world.nearest_free(cen / pk.members.size())
+	elif not far and pk.virtual:
+		_materialize(pk)
+
+
+func _step_virtual(pk: Pack, dt: float, far_view: Rect2) -> void:
+	## The whole pack moves as one point (one wall test) instead of N machines.
+	var a := pk.center
+	var na: Vector2 = G.world.move_small(a, pk.dir * pk.speed * dt, 3.0)
+	pk.drift += na - a
+	pk.center = na
+	if far_view.has_point(na):
+		_materialize(pk)       # coming into view: give everyone real positions
+
+
+func _materialize(pk: Pack) -> void:
+	## Turn the pack's drift back into real positions (nudged out of walls).
+	pk.virtual = false
+	var world: World = G.world
+	var v := pk.dir * pk.speed
+	for m in pk.members:
+		if not m.alive:
+			continue
+		var p: Vector2 = m.pos + (pk.drift - m.base)
+		m.base = pk.drift
+		if not world.small_free(p, m.r):
+			p = world.nearest_free(p)
+		m.pos = p
+		m.vel = v
+		m.want = v
+
+
+func pos_of(e: Enemy) -> Vector2:
+	## Where a machine really is (members of virtual packs only store offsets).
+	if e.pack != null and e.pack.virtual:
+		return e.pos + (e.pack.drift - e.base)
+	return e.pos
 
 
 func _pack_want(e: Enemy, pk: Pack) -> void:
@@ -510,7 +589,7 @@ func _rebuild_buckets() -> void:
 			grid[i] = []
 	var inv := 1.0 / BUCKET
 	for e in list:
-		if not e.alive:
+		if not e.alive or (e.pack != null and e.pack.virtual):
 			continue
 		var gx := clampi(int(e.pos.x * inv), 0, bw - 1)
 		var gy := clampi(int(e.pos.y * inv), 0, bh - 1)
