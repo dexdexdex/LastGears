@@ -50,14 +50,21 @@ class Enemy:
 	var strafe := 1.0
 	var awake := true          # dormant swarm fields idle until something comes close
 	var wander := Vector2.ZERO
+	var want := Vector2.ZERO   # desired velocity, set by the (time-sliced) think step
 	var seen := false          # inside some squad mech's vision cone right now
 	var seen_t := -99.0
 
 const WAKE_R := 300.0
 
 var list: Array = []
-var buckets := {}
 const BUCKET := 48.0
+const THINK_HZ := 20.0     # each machine re-decides ~20x/s; all of them move every frame
+var bw := 0
+var bh := 0
+var grid: Array = []       # flat bucket grid of Arrays
+var touched := PackedInt32Array()
+var think_slice := 0
+var deaths := 0
 var flow_timer := 0.0
 var vis_t := 0.0
 
@@ -79,18 +86,31 @@ func spawn(type: String, pos: Vector2) -> Enemy:
 	return e
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_body(delta)
+	G.pe("enemies sim", _t0)
+
+
+func _process_body(delta: float) -> void:
 	if G.game_state != "play":
 		return
+	delta = minf(delta, 0.05)
 	flow_timer -= delta
-	if flow_timer <= 0.0:
-		flow_timer = 0.45
+	var tf := Time.get_ticks_usec()
+	if flow_timer <= 0.0 and not G.world.flow_building:
+		flow_timer = 0.4
 		var srcs: Array = []
 		for m in G.squad:
 			if m.alive:
 				srcs.append(m.position)
-		G.world.update_flow(srcs)
-	_rebuild_buckets()
+		G.world.start_flow(srcs)
+	G.world.step_flow(2500)
+	G.pe(" · flow field", tf)
+	var tb := Time.get_ticks_usec()
+	if Engine.get_process_frames() % 2 == 0 or bw == 0:
+		_rebuild_buckets()       # machines move ~1-2 px/frame; 48 px buckets stay valid
+	G.pe(" · buckets", tb)
 	var alive_mechs := G.alive_squad()
 	if alive_mechs.is_empty():
 		return
@@ -98,21 +118,47 @@ func _physics_process(delta: float) -> void:
 	if vis_t <= 0.0:
 		vis_t = 0.12
 		_update_visibility(alive_mechs)
-	for e in list:
-		if e.alive:
-			_think(e, delta, alive_mechs)
-	var keep: Array = []
-	for e in list:
-		if e.alive:
-			keep.append(e)
-	list = keep
+	# Time-sliced thinking: each frame only 1/k of the swarm re-decides.
+	var k := maxi(1, int(round(1.0 / maxf(delta, 0.001) / THINK_HZ)))
+	think_slice = (think_slice + 1) % k
+	var think_dt := delta * k
+	var n := list.size()
+	var tt := Time.get_ticks_usec()
+	for i in n:
+		var e: Enemy = list[i]
+		if not e.alive:
+			continue
+		if i % k == think_slice:
+			_think(e, think_dt, alive_mechs)
+			if not e.alive:
+				continue
+		if not e.awake and e.want == Vector2.ZERO and e.vel == Vector2.ZERO and e.flash <= 0.0:
+			continue
+		_move(e, delta)
+	G.pe(" · think+move", tt)
+	if deaths > 0:
+		deaths = 0
+		list = list.filter(func(x): return x.alive)
 	queue_redraw()
+
+
+func _move(e: Enemy, delta: float) -> void:
+	e.flash = maxf(0.0, e.flash - delta * 6.0)
+	e.vel = e.vel.lerp(e.want, clampf(5.0 * delta, 0, 1))
+	var step := e.vel * delta
+	if step.length_squared() < 0.0004:
+		if e.want == Vector2.ZERO:
+			e.vel = Vector2.ZERO
+		return
+	if G.world.near_solid_at(e.pos):
+		e.pos = G.world.move_circle(e.pos, step, e.r)
+	else:
+		e.pos += step
 
 
 func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	e.t += delta
 	e.cd -= delta
-	e.flash = maxf(0.0, e.flash - delta * 6.0)
 	if not e.awake:
 		e.los_t -= delta
 		if e.los_t <= 0.0:
@@ -121,10 +167,11 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 				if e.pos.distance_squared_to(m.position) < WAKE_R * WAKE_R:
 					wake_around(e.pos, 140.0)
 					break
-			if randf() < 0.3:
-				e.wander = Vector2.from_angle(randf() * TAU) * randf_range(0.0, 8.0)
-		e.vel = e.vel.lerp(e.wander, clampf(2.0 * delta, 0, 1))
-		e.pos = G.world.move_circle(e.pos, e.vel * delta, e.r)
+			# mostly still; the odd shuffle
+			e.wander = Vector2.from_angle(randf() * TAU) * 6.0 if randf() < 0.08 else Vector2.ZERO
+		e.want = e.wander
+		if e.want == Vector2.ZERO and e.vel.length_squared() < 0.5:
+			e.vel = Vector2.ZERO
 		return
 	# nearest mech
 	var best: Mech = null
@@ -178,13 +225,15 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	# separation (bucket neighbours, capped)
 	var sep := Vector2.ZERO
 	var checked := 0
-	var bk := Vector2i(int(e.pos.x / BUCKET), int(e.pos.y / BUCKET))
+	var bx := int(e.pos.x / BUCKET)
+	var by := int(e.pos.y / BUCKET)
 	for ox in [-1, 0, 1]:
 		for oy in [-1, 0, 1]:
-			var arr = buckets.get(bk + Vector2i(ox, oy))
-			if arr == null:
+			var gx: int = bx + ox
+			var gy: int = by + oy
+			if gx < 0 or gy < 0 or gx >= bw or gy >= bh:
 				continue
-			for o in arr:
+			for o in grid[gy * bw + gx]:
 				if o == e:
 					continue
 				var dv: Vector2 = e.pos - o.pos
@@ -195,36 +244,48 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 				checked += 1
 				if checked > 10:
 					break
-	var want := (desired * spd) + sep * 90.0
-	e.vel = e.vel.lerp(want, clampf(5.0 * delta, 0, 1))
-	e.pos = G.world.move_circle(e.pos, e.vel * delta, e.r)
+	if e.d.has("melee") and desired == Vector2.ZERO:
+		e.want = sep * 90.0
+	else:
+		e.want = (desired * spd) + sep * 90.0
 
 
 func _rebuild_buckets() -> void:
-	buckets.clear()
+	if bw == 0:
+		bw = int(G.world.W * World.CELL / BUCKET) + 1
+		bh = int(G.world.H * World.CELL / BUCKET) + 1
+		grid.resize(bw * bh)
+		for i in grid.size():
+			grid[i] = []
+	for idx in touched:
+		grid[idx].clear()
+	touched.resize(0)
 	for e in list:
 		if not e.alive:
 			continue
-		var k := Vector2i(int(e.pos.x / BUCKET), int(e.pos.y / BUCKET))
-		if buckets.has(k):
-			buckets[k].append(e)
-		else:
-			buckets[k] = [e]
+		var gx := clampi(int(e.pos.x / BUCKET), 0, bw - 1)
+		var gy := clampi(int(e.pos.y / BUCKET), 0, bh - 1)
+		var idx := gy * bw + gx
+		var cell: Array = grid[idx]
+		if cell.is_empty():
+			touched.append(idx)
+		cell.append(e)
 
 
 func query_radius(p: Vector2, r: float) -> Array:
 	var out: Array = []
-	var x0 := int((p.x - r) / BUCKET)
-	var x1 := int((p.x + r) / BUCKET)
-	var y0 := int((p.y - r) / BUCKET)
-	var y1 := int((p.y + r) / BUCKET)
-	for x in range(x0, x1 + 1):
-		for y in range(y0, y1 + 1):
-			var arr = buckets.get(Vector2i(x, y))
-			if arr == null:
-				continue
-			for e in arr:
-				if e.alive and e.pos.distance_to(p) <= r + e.r:
+	if bw == 0:
+		return out
+	var x0 := maxi(0, int((p.x - r) / BUCKET))
+	var x1 := mini(bw - 1, int((p.x + r) / BUCKET))
+	var y0 := maxi(0, int((p.y - r) / BUCKET))
+	var y1 := mini(bh - 1, int((p.y + r) / BUCKET))
+	for y in range(y0, y1 + 1):
+		var row := y * bw
+		for x in range(x0, x1 + 1):
+			for e in grid[row + x]:
+				var rr: float = r + e.r
+				if e.alive and e.pos.distance_squared_to(p) <= rr * rr:
 					out.append(e)
 	return out
 
@@ -251,6 +312,12 @@ func count_near(p: Vector2, r: float) -> int:
 
 
 func _update_visibility(mechs: Array) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_update_visibility_body(mechs)
+	G.pe("enemies vis", _t0)
+
+
+func _update_visibility_body(mechs: Array) -> void:
 	## An enemy is "seen" if it's inside any squad mech's light cone with a
 	## clear line of sight (or inside a hull halo). Shared across the squad.
 	for e in list:
@@ -313,6 +380,7 @@ func kill(e: Enemy, by: Mech) -> void:
 	if not e.alive:
 		return
 	e.alive = false
+	deaths += 1
 	G.kills += 1
 	G.leg_kills[e.type] = int(G.leg_kills.get(e.type, 0)) + 1
 	if by:
@@ -338,8 +406,17 @@ func alive_count() -> int:
 
 
 func _draw() -> void:
+	var _t0 := Time.get_ticks_usec()
+	_draw_body()
+	G.pe("enemies draw", _t0)
+
+
+func _draw_body() -> void:
 	var tsec := Time.get_ticks_msec() / 1000.0
+	var view := G.camera.view_rect().grow(30.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
 	for e in list:
+		if not view.has_point(e.pos):
+			continue
 		var c: Color = e.d.color
 		if e.flash > 0.0:
 			c = c.lerp(Color.WHITE, e.flash)

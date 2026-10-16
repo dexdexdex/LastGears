@@ -44,8 +44,10 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Pause | Enter | Select/Share |
 | Field refit menu (real time!) | Esc | Start |
 | Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
+| FPS meter: per-system profiler breakdown | F1 | |
+| Render resolution: fast (1600×900 scaled up) / sharp (native, e.g. Retina) | F9 | |
 | Toggle director readout | F3 | |
-| Toggle satellite filter | F2 | |
+| Toggle satellite grain/tint (darkness stays) | F2 | |
 | Restart | F5 | |
 
 ## The campaign
@@ -143,13 +145,25 @@ scripts/
   station_menu.gd       station screen: hangar, market, repairs, depart
   field_menu.gd         real-time refit UI
   hud.gd                HUD, tactical corridor map, end screen
-  lighting.gd           darkness, mech light cones + shadows, flashes, vision-cone maths
+  lighting.gd           darkness: ray-cast light cones painted into a half-res light map
+                        (applied by the post shader), flashes, vision-cone maths
   game_camera.gd        follow, aim look-ahead, tactical zoom, shake
 shaders/satellite.gdshader   grain / scanline / tint "satellite feed" filter
 ```
 
 Balancing lives almost entirely in `parts_db.gd`, `enemy_manager.gd` (`TYPES`) and
 `director.gd`.
+
+## Performance notes
+
+Built for 120 Hz. Everything that moves updates every rendered frame (no 60 Hz
+physics stepping). The swarm re-decides ~20×/s, time-sliced, but all of it
+moves every frame; sleeping machines cost nothing until they wake. The flow
+field that steers the swarm is rebuilt a slice per frame so it never hitches.
+The city is drawn in 600 px chunks so off-screen chunks are culled, and
+enemies, shots and pickups only draw on screen. Darkness doesn't use Light2D:
+cones are ray-cast against the grid and painted once into a half-resolution
+light map that the post shader multiplies in. F1 shows the per-system cost.
 
 ## Automated playtest
 

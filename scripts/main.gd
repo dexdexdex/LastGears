@@ -41,8 +41,13 @@ func _ready() -> void:
 	var mech_layer := Node2D.new()
 	add_child(mech_layer)
 
+	# Tracers and blasts draw above the darkness so they glow.
+	var glow_layer := CanvasLayer.new()
+	glow_layer.layer = 2
+	glow_layer.follow_viewport_enabled = true
+	add_child(glow_layer)
 	var projectiles := ProjectileManager.new()
-	add_child(projectiles)
+	glow_layer.add_child(projectiles)
 	G.projectiles = projectiles
 
 	var offsets := [Vector2.ZERO, Vector2(-40, -45), Vector2(-60, 45), Vector2(-90, 0)]
@@ -66,11 +71,9 @@ func _ready() -> void:
 
 	var lighting := Lighting.new()
 	add_child(lighting)
-	lighting.setup(world, G.squad)
+	if not ("--nolights" in OS.get_cmdline_user_args()):
+		lighting.setup(world, G.squad)
 	G.lighting = lighting
-	var unshaded := CanvasItemMaterial.new()
-	unshaded.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
-	projectiles.material = unshaded          # tracers and blasts glow in the dark
 
 	var cam := GameCamera.new()
 	add_child(cam)
@@ -94,9 +97,14 @@ func _ready() -> void:
 	mat.shader = load("res://shaders/satellite.gdshader")
 	filter_rect.material = mat
 	fl.add_child(filter_rect)
+	mat.set_shader_parameter("fx_on", true)
+	mat.set_shader_parameter("lit", lighting.vp != null)
+	if lighting.vp:
+		mat.set_shader_parameter("light_tex", lighting.light_texture())
+	mat.set_shader_parameter("ambient", Vector3(Lighting.AMBIENT.r, Lighting.AMBIENT.g, Lighting.AMBIENT.b))
 
 	var hl := CanvasLayer.new()
-	hl.layer = 2
+	hl.layer = 3
 	add_child(hl)
 	var hud := Hud.new()
 	hl.add_child(hud)
@@ -140,7 +148,8 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_director"):
 		G.show_director = not G.show_director
 	if Input.is_action_just_pressed("toggle_filter"):
-		filter_rect.visible = not filter_rect.visible
+		var fm: ShaderMaterial = filter_rect.material
+		fm.set_shader_parameter("fx_on", not fm.get_shader_parameter("fx_on"))
 	if Input.is_action_just_pressed("open_menu"):
 		G.menu.toggle()
 	elif G.menu.open:
@@ -177,6 +186,10 @@ func _process(delta: float) -> void:
 				G.game_time, Engine.get_frames_per_second(), G.world.progress_of(G.player.position) * 100,
 				G.enemies.alive_count(), Director.PHASE_NAMES[G.director.phase], G.director.intensity,
 				str(G.materials), ", ".join(states)])
+			var parts: Array = []
+			for k in G.prof_avg:
+				parts.append("%s %.2f" % [k, G.prof_avg[k]])
+			print("[prof] frame %.2f ms | %s" % [G.fps_ms, ", ".join(parts)])
 
 
 func _formation_input() -> void:

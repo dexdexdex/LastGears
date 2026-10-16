@@ -36,6 +36,27 @@ var menu_closed_t := -99.0
 var game_state := "play"       # play | won | lost
 var bot_mode := false          # --bot : AI drives the player (for automated tests)
 var show_director := true
+var show_profiler := false
+# Render at the 1600x900 base resolution and scale up (fast), or at the
+# display's native resolution (sharp; Retina = ~4x the pixels to light).
+var render_fast := true
+
+
+func apply_render_mode() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	get_tree().root.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT if render_fast else Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+
+# Lightweight profiler: usec per named section, averaged per frame each second.
+var prof := {}
+var prof_avg := {}       # name -> ms per frame (last second)
+var prof_frames := 0
+var prof_t := 0.0
+var fps_ms := 0.0        # average frame time over last second
+
+
+func pe(name: String, t0: int) -> void:
+	prof[name] = int(prof.get(name, 0)) + Time.get_ticks_usec() - t0
 
 const MATERIAL_NAMES := {"scrap": "SCRAP", "circuits": "CIRCUITS", "cells": "CELLS"}
 const MATERIAL_COLORS := {
@@ -49,6 +70,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_input()
 	using_mouse = Input.get_connected_joypads().is_empty()
+	apply_render_mode.call_deferred()
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN
 	bot_mode = "--bot" in OS.get_cmdline_user_args()
@@ -69,6 +91,21 @@ func reset() -> void:
 
 
 func _process(delta: float) -> void:
+	prof_frames += 1
+	prof_t += delta
+	if prof_t >= 1.0:
+		prof_avg = {}
+		for k in prof:
+			prof_avg[k] = prof[k] / 1000.0 / prof_frames
+		fps_ms = prof_t * 1000.0 / prof_frames
+		prof.clear()
+		prof_frames = 0
+		prof_t = 0.0
+	if Input.is_action_just_pressed("toggle_profiler"):
+		show_profiler = not show_profiler
+	if Input.is_action_just_pressed("toggle_render"):
+		render_fast = not render_fast
+		apply_render_mode()
 	if Input.is_action_just_pressed("toggle_fullscreen"):
 		var fs := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fs else DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -204,6 +241,8 @@ func _setup_input() -> void:
 
 	_key("restart", [KEY_F5])
 	_key("toggle_director", [KEY_F3])
+	_key("toggle_profiler", [KEY_F1])
+	_key("toggle_render", [KEY_F9])
 	_key("toggle_filter", [KEY_F2])
 
 

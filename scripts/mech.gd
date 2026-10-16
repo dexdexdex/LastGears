@@ -109,7 +109,14 @@ func speed() -> float:
 	return s
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_body(delta)
+	G.pe("mechs+AI", _t0)
+
+
+func _process_body(delta: float) -> void:
+	delta = minf(delta, 0.05)
 	if not alive or G.game_state != "play":
 		return
 	if brain:
@@ -134,13 +141,13 @@ func _physics_process(delta: float) -> void:
 		try_dodge()
 	if dodge_t > 0.0:
 		dodge_t -= delta
-		if Engine.get_physics_frames() % 2 == 0:
+		if Engine.get_process_frames() % 2 == 0:
 			ghosts.append(position)
 		var k := clampf(dodge_t / DODGE_TIME, 0.0, 1.0)
 		vel = dodge_dir * dodge_speed * (0.35 + 0.65 * k)
 		if dodge_t <= 0.0:
 			vel = dodge_dir * speed() * 0.6
-	if dodge_t <= 0.0 and not ghosts.is_empty() and Engine.get_physics_frames() % 3 == 0:
+	if dodge_t <= 0.0 and not ghosts.is_empty() and Engine.get_process_frames() % 3 == 0:
 		ghosts.pop_front()
 
 	# movement
@@ -361,6 +368,12 @@ func hp_ratio() -> float:
 # ---------------------------------------------------------------- drawing
 
 func _draw() -> void:
+	var _t0 := Time.get_ticks_usec()
+	_draw_body()
+	G.pe("mechs draw", _t0)
+
+
+func _draw_body() -> void:
 	var col := color
 	if damage_flash > 0.0:
 		col = col.lerp(Color.WHITE, damage_flash * 0.7)

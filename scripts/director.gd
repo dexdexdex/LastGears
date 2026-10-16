@@ -49,6 +49,12 @@ func near_count() -> int:
 
 
 func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_body(delta)
+	G.pe("director", _t0)
+
+
+func _process_body(delta: float) -> void:
 	if G.game_state != "play" or G.alive_squad().is_empty():
 		return
 	t += delta

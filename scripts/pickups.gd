@@ -2,7 +2,8 @@ class_name Pickups
 extends Node2D
 ## Supply caches in the ruins and salvage dropped by destroyed machines.
 
-var items: Array = []   # {pos, loot, kind, taken, t}
+var items: Array = []   # {pos, loot, kind, taken, t (pulse phase)}
+var check_t := 0.0
 
 
 func populate(spots: Array, rng: RandomNumberGenerator) -> void:
@@ -34,18 +35,32 @@ func nearest(pos: Vector2, max_d: float, kind: String = "") -> Variant:
 	return best
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_body(delta)
+	G.pe("pickups", _t0)
+
+
+func _process_body(delta: float) -> void:
+	delta = minf(delta, 0.05)
 	if G.game_state != "play":
 		return
+	check_t -= delta
+	if check_t > 0.0:
+		queue_redraw()
+		return
+	check_t = 0.08
+	var any := false
 	for it in items:
-		it.t += delta
 		if it.taken:
 			continue
 		for m in G.squad:
-			if m.alive and m.position.distance_to(it.pos) < m.radius + 16.0:
+			if m.alive and m.position.distance_squared_to(it.pos) < (m.radius + 16.0) * (m.radius + 16.0):
 				_collect(it, m)
+				any = true
 				break
-	items = items.filter(func(i): return not i.taken)
+	if any:
+		items = items.filter(func(i): return not i.taken)
 	queue_redraw()
 
 
@@ -65,8 +80,11 @@ func _collect(it: Dictionary, m: Mech) -> void:
 
 
 func _draw() -> void:
+	var view := G.camera.view_rect().grow(30.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
 	for it in items:
-		var pulse: float = 0.5 + 0.5 * sin(it.t * 3.0)
+		if not view.has_point(it.pos):
+			continue
+		var pulse: float = 0.5 + 0.5 * sin(it.t + G.game_time * 3.0)
 		if it.kind == "cache":
 			var r := Rect2(it.pos - Vector2(6, 6), Vector2(12, 12))
 			draw_rect(r.grow(2), Color(1, 0.8, 0.35, 0.15 + 0.15 * pulse))

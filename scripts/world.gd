@@ -12,6 +12,7 @@ var start_c := Vector2.ZERO           # px, centre of departure compound
 var goal_c := Vector2.ZERO            # px, centre of destination compound
 
 var blocked := PackedByteArray()      # 1 = solid (building / wall / border)
+var near := PackedByteArray()         # 1 = solid or touching solid (needs real collision)
 var buildings: Array = []             # Array[Rect2i] in cells
 var walls: Array = []                 # Array[Rect2i] settlement walls
 var plazas: Array = []               # [center px, radius px] open ground, no buildings
@@ -140,7 +141,7 @@ func generate(seed_value: int, p_from: String = "Outpost Gravel", p_to: String =
 
 	_build_astar()
 	_build_map_texture()
-	queue_redraw()
+	_build_chunks()
 
 
 func _side_of(d: Vector2) -> Vector2i:
@@ -201,6 +202,14 @@ func is_solid(cx: int, cy: int) -> bool:
 	return blocked[cy * W + cx] == 1
 
 
+func near_solid_at(p: Vector2) -> bool:
+	var cx := int(p.x / CELL)
+	var cy := int(p.y / CELL)
+	if cx < 1 or cy < 1 or cx >= W - 1 or cy >= H - 1:
+		return true
+	return near[cy * W + cx] == 1
+
+
 func is_solid_at(p: Vector2) -> bool:
 	return is_solid(int(floor(p.x / CELL)), int(floor(p.y / CELL)))
 
@@ -238,6 +247,33 @@ func move_circle(p: Vector2, motion: Vector2, r: float) -> Vector2:
 	if not circle_hits(ny, r):
 		out = ny
 	return out
+
+
+func ray_dist(o: Vector2, d: Vector2, maxd: float) -> float:
+	## Distance from o along unit d to the first solid cell (or maxd).
+	var cx := int(floor(o.x / CELL))
+	var cy := int(floor(o.y / CELL))
+	var sx := 1 if d.x > 0.0 else -1
+	var sy := 1 if d.y > 0.0 else -1
+	var tdx := absf(CELL / d.x) if absf(d.x) > 1e-6 else INF
+	var tdy := absf(CELL / d.y) if absf(d.y) > 1e-6 else INF
+	var nx := (cx + (1 if sx > 0 else 0)) * CELL
+	var ny := (cy + (1 if sy > 0 else 0)) * CELL
+	var tmx := (nx - o.x) / d.x if absf(d.x) > 1e-6 else INF
+	var tmy := (ny - o.y) / d.y if absf(d.y) > 1e-6 else INF
+	var t := 0.0
+	while t < maxd:
+		if tmx < tmy:
+			t = tmx
+			tmx += tdx
+			cx += sx
+		else:
+			t = tmy
+			tmy += tdy
+			cy += sy
+		if cx < 0 or cy < 0 or cx >= W or cy >= H or blocked[cy * W + cx] == 1:
+			return minf(t, maxd)
+	return maxd
 
 
 func segment_blocked(a: Vector2, b: Vector2) -> bool:
@@ -298,12 +334,16 @@ func _build_astar() -> void:
 	astar.offset = Vector2(CELL * 0.5, CELL * 0.5)
 	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	astar.update()
+	near.resize(W * H)
+	near.fill(0)
 	for x in W:
 		for y in H:
 			if is_solid(x, y):
 				astar.set_point_solid(Vector2i(x, y), true)
+				near[y * W + x] = 1
 			elif _touches_solid(x, y):
 				astar.set_point_weight_scale(Vector2i(x, y), 4.0)
+				near[y * W + x] = 1
 
 
 func _touches_solid(x: int, y: int) -> bool:
@@ -324,33 +364,75 @@ func find_path(a: Vector2, b: Vector2) -> PackedVector2Array:
 
 # ---------------------------------------------------------------- flow field (swarm)
 
-func update_flow(sources: Array) -> void:
-	if flow.size() != W * H:
-		flow.resize(W * H)
-	flow.fill(FLOW_INF)
-	var queue := PackedInt32Array()
-	queue.resize(W * H)
-	var head := 0
-	var tail := 0
+# The flow field is rebuilt incrementally over several frames (a BFS spread
+# across frames) so recomputing it never causes a hitch.
+var flow_build := PackedInt32Array()
+var fqueue := PackedInt32Array()
+var fhead := 0
+var ftail := 0
+var flow_building := false
+
+
+func start_flow(sources: Array) -> void:
+	if flow_build.size() != W * H:
+		flow_build.resize(W * H)
+		fqueue.resize(W * H)
+	flow_build.fill(FLOW_INF)
+	fhead = 0
+	ftail = 0
 	for s in sources:
 		var c := to_cell(s)
 		if is_solid(c.x, c.y):
 			continue
 		var i := c.y * W + c.x
-		flow[i] = 0
-		queue[tail] = i
-		tail += 1
-	while head < tail:
-		var i := queue[head]
-		head += 1
-		var d := flow[i]
-		if d >= FLOW_MAX:
+		flow_build[i] = 0
+		fqueue[ftail] = i
+		ftail += 1
+	flow_building = true
+
+
+func step_flow(budget: int) -> void:
+	if not flow_building:
+		return
+	var done := 0
+	while fhead < ftail and done < budget:
+		var i := fqueue[fhead]
+		fhead += 1
+		done += 1
+		var d := flow_build[i] + 1
+		if d > FLOW_MAX:
 			continue
-		for n in [i - 1, i + 1, i - W, i + W]:
-			if blocked[n] == 0 and flow[n] > d + 1:
-				flow[n] = d + 1
-				queue[tail] = n
-				tail += 1
+		var n := i - 1
+		if blocked[n] == 0 and flow_build[n] > d:
+			flow_build[n] = d
+			fqueue[ftail] = n
+			ftail += 1
+		n = i + 1
+		if blocked[n] == 0 and flow_build[n] > d:
+			flow_build[n] = d
+			fqueue[ftail] = n
+			ftail += 1
+		n = i - W
+		if blocked[n] == 0 and flow_build[n] > d:
+			flow_build[n] = d
+			fqueue[ftail] = n
+			ftail += 1
+		n = i + W
+		if blocked[n] == 0 and flow_build[n] > d:
+			flow_build[n] = d
+			fqueue[ftail] = n
+			ftail += 1
+	if fhead >= ftail:
+		var tmp := flow
+		flow = flow_build
+		flow_build = tmp
+		flow_building = false
+
+
+func update_flow(sources: Array) -> void:
+	## Synchronous rebuild (used only where a full field is needed at once).
+	start_flow(sources)
+	step_flow(1 << 30)
 
 
 func flow_dir(p: Vector2) -> Vector2:
@@ -384,62 +466,102 @@ const COL_EDGE := Color(0.30, 0.31, 0.27)
 const COL_WALL := Color(0.42, 0.28, 0.18)
 
 
-func _draw() -> void:
+# The city is drawn in chunks so the renderer culls everything off screen.
+const CHUNK := 600.0
+
+
+class Chunk extends Node2D:
+	var world: World
+	var rect: Rect2
+
+	func _draw() -> void:
+		world.draw_chunk(self, rect)
+
+
+func _build_chunks() -> void:
+	for c in get_children():
+		if c is Chunk:
+			c.queue_free()
 	var sz := size_px()
-	draw_rect(Rect2(Vector2.ZERO, sz), COL_GROUND)
-	for s in specks:
-		var c := COL_GROUND.lightened(s[2]) if s[2] > 0 else COL_GROUND.darkened(-s[2])
-		draw_rect(Rect2(s[0], Vector2(s[1], s[1])), c)
+	var nx := int(ceil(sz.x / CHUNK))
+	var ny := int(ceil(sz.y / CHUNK))
+	for cy in ny:
+		for cx in nx:
+			var ch := Chunk.new()
+			ch.world = self
+			ch.rect = Rect2(Vector2(cx, cy) * CHUNK, Vector2(CHUNK, CHUNK)).intersection(Rect2(Vector2.ZERO, sz))
+			add_child(ch)
+
+
+func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
+	ci.draw_rect(rect, COL_GROUND)
+	for sp in specks:
+		if rect.has_point(sp[0]):
+			var c := COL_GROUND.lightened(sp[2]) if sp[2] > 0 else COL_GROUND.darkened(-sp[2])
+			ci.draw_rect(Rect2(sp[0], Vector2(sp[1], sp[1])), c)
 	for cr in craters:
-		draw_circle(cr[0], cr[1], Color(0.11, 0.115, 0.1, 0.8))
-		draw_arc(cr[0], cr[1], 0, TAU, 24, Color(0.22, 0.22, 0.18, 0.5), 2.0)
+		if rect.has_point(cr[0]):
+			ci.draw_circle(cr[0], cr[1], Color(0.11, 0.115, 0.1, 0.8))
+			ci.draw_arc(cr[0], cr[1], 0, TAU, 24, Color(0.22, 0.22, 0.18, 0.5), 2.0)
 	# faint survey grid
 	var gc := Color(0.4, 0.5, 0.35, 0.05)
-	for x in range(0, W + 1, 5):
-		draw_line(Vector2(x * CELL, 0), Vector2(x * CELL, sz.y), gc, 1.0)
-	for y in range(0, H + 1, 5):
-		draw_line(Vector2(0, y * CELL), Vector2(sz.x, y * CELL), gc, 1.0)
+	var step := CELL * 5.0
+	var gx := ceilf(rect.position.x / step) * step
+	while gx <= rect.end.x:
+		ci.draw_line(Vector2(gx, rect.position.y), Vector2(gx, rect.end.y), gc, 1.0)
+		gx += step
+	var gy := ceilf(rect.position.y / step) * step
+	while gy <= rect.end.y:
+		ci.draw_line(Vector2(rect.position.x, gy), Vector2(rect.end.x, gy), gc, 1.0)
+		gy += step
 	# plazas: rubble-strewn open ground
 	for pl in plazas:
-		draw_circle(pl[0], pl[1] * 0.85, Color(0.17, 0.17, 0.14, 0.5))
+		if not rect.has_point(pl[0]):
+			continue
+		ci.draw_circle(pl[0], pl[1] * 0.85, Color(0.17, 0.17, 0.14, 0.5))
 		var pr := RandomNumberGenerator.new()
 		pr.seed = int(pl[0].x * 31 + pl[0].y)
 		for k in 10:
 			var rp: Vector2 = pl[0] + Vector2.from_angle(pr.randf() * TAU) * pr.randf() * pl[1] * 0.8
-			draw_rect(Rect2(rp, Vector2(pr.randf_range(3, 9), pr.randf_range(3, 7))), COL_EDGE.darkened(0.45))
-	# buildings
+			ci.draw_rect(Rect2(rp, Vector2(pr.randf_range(3, 9), pr.randf_range(3, 7))), COL_EDGE.darkened(0.45))
+	# buildings (owned by the chunk containing their top-left corner)
 	for r in buildings:
 		var rp := Rect2(Vector2(r.position) * CELL, Vector2(r.size) * CELL)
-		draw_rect(rp.grow(3), Color(0, 0, 0, 0.35))
-		draw_rect(rp, COL_BLDG)
-		draw_rect(rp.grow(-5), COL_ROOF)
-		draw_rect(rp, COL_EDGE, false, 1.5)
+		if not rect.has_point(rp.position):
+			continue
+		ci.draw_rect(rp.grow(3), Color(0, 0, 0, 0.35))
+		ci.draw_rect(rp, COL_BLDG)
+		ci.draw_rect(rp.grow(-5), COL_ROOF)
+		ci.draw_rect(rp, COL_EDGE, false, 1.5)
 		var hv := int(r.position.x * 7 + r.position.y * 13)
 		if hv % 3 == 0:
-			draw_rect(Rect2(rp.position + Vector2(8, 8), Vector2(10, 6)), COL_EDGE.darkened(0.3))
+			ci.draw_rect(Rect2(rp.position + Vector2(8, 8), Vector2(10, 6)), COL_EDGE.darkened(0.3))
 		if hv % 4 == 1:
-			draw_line(rp.position + Vector2(6, rp.size.y - 6), rp.position + Vector2(rp.size.x - 6, 6), COL_BLDG, 3.0)
+			ci.draw_line(rp.position + Vector2(6, rp.size.y - 6), rp.position + Vector2(rp.size.x - 6, 6), COL_BLDG, 3.0)
 	# settlement walls and lights
 	for wr in walls:
 		for x in range(wr.position.x, wr.end.x):
 			for y in range(wr.position.y, wr.end.y):
-				if is_solid(x, y):
-					draw_rect(Rect2(Vector2(x, y) * CELL, Vector2(CELL, CELL)), COL_WALL.darkened(0.35))
-					draw_rect(Rect2(Vector2(x, y) * CELL, Vector2(CELL, CELL)).grow(-4), COL_WALL)
+				var cp := Vector2(x, y) * CELL
+				if is_solid(x, y) and rect.has_point(cp):
+					ci.draw_rect(Rect2(cp, Vector2(CELL, CELL)), COL_WALL.darkened(0.35))
+					ci.draw_rect(Rect2(cp, Vector2(CELL, CELL)).grow(-4), COL_WALL)
 	var font := ThemeDB.fallback_font
-	_draw_settlement(start_zone, "%s — DEPARTED" % from_name.to_upper(), Color(0.7, 0.8, 0.6), font)
-	_draw_settlement(goal_zone, "%s — DESTINATION" % to_name.to_upper(), Color(1.0, 0.82, 0.45), font)
+	if rect.has_point(start_zone.position):
+		_draw_settlement(ci, start_zone, "%s — DEPARTED" % from_name.to_upper(), Color(0.7, 0.8, 0.6), font)
+	if rect.has_point(goal_zone.position):
+		_draw_settlement(ci, goal_zone, "%s — DESTINATION" % to_name.to_upper(), Color(1.0, 0.82, 0.45), font)
 
 
-func _draw_settlement(z: Rect2, label: String, col: Color, font: Font) -> void:
-	draw_rect(z, Color(col, 0.06))
+func _draw_settlement(ci: CanvasItem, z: Rect2, label: String, col: Color, font: Font) -> void:
+	ci.draw_rect(z, Color(col, 0.06))
 	var r := RandomNumberGenerator.new()
 	r.seed = int(z.position.x)
 	for i in 14:
 		var p := z.position + Vector2(r.randf() * z.size.x, r.randf() * z.size.y)
-		draw_rect(Rect2(p, Vector2(r.randf_range(14, 40), r.randf_range(10, 30))), Color(0.18, 0.17, 0.14))
-		draw_circle(p + Vector2(4, 4), 2.5, Color(1.0, 0.75, 0.35, 0.9))
-	draw_string(font, z.position + Vector2(4, -10), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, col)
+		ci.draw_rect(Rect2(p, Vector2(r.randf_range(14, 40), r.randf_range(10, 30))), Color(0.18, 0.17, 0.14))
+		ci.draw_circle(p + Vector2(4, 4), 2.5, Color(1.0, 0.75, 0.35, 0.9))
+	ci.draw_string(font, z.position + Vector2(4, -10), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, col)
 
 
 func _build_map_texture() -> void:

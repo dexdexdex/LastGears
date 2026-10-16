@@ -86,7 +86,14 @@ func explode(pos: Vector2, radius: float, dmg: float, team: int, hurt_mechs: boo
 			G.camera.shake(clampf(radius / 260.0, 0.05, 0.4) * (1.0 - cd / 500.0))
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_process_body(delta)
+	G.pe("shots sim", _t0)
+
+
+func _process_body(delta: float) -> void:
+	delta = minf(delta, 0.05)
 	if G.game_state != "play":
 		return
 	var keep: Array = []
@@ -148,11 +155,22 @@ func _step(p: Proj, delta: float) -> bool:
 
 
 func _draw() -> void:
+	var _t0 := Time.get_ticks_usec()
+	_draw_body()
+	G.pe("shots draw", _t0)
+
+
+func _draw_body() -> void:
+	var view := G.camera.view_rect().grow(120.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
 	for f in fx:
+		if not view.has_point(f.pos):
+			continue
 		if f.type == "wreck":
 			draw_circle(f.pos, f.r, f.color)
 			draw_circle(f.pos + Vector2(3, -2), f.r * 0.5, Color(0, 0, 0, 0.5))
 	for p in shots:
+		if not view.has_point(p.pos):
+			continue
 		if p.lob:
 			var total: float = p.start.distance_to(p.target)
 			var k := clampf(p.start.distance_to(p.pos) / maxf(total, 1.0), 0, 1)
@@ -164,6 +182,8 @@ func _draw() -> void:
 			var tail: Vector2 = p.vel.normalized() * minf(p.vel.length() * 0.025, 18.0)
 			draw_line(p.pos - tail, p.pos, p.color, p.width)
 	for f in fx:
+		if not view.has_point(f.pos):
+			continue
 		var k: float = f.t / f.dur
 		match f.type:
 			"explosion":

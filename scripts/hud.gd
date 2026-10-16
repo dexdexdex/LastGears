@@ -26,7 +26,7 @@ func _ready() -> void:
 
 
 const RADAR_RANGES := [700.0, 1400.0, 2800.0]   # px; Q / R2 cycles
-const RADAR_PERIOD := 2.4                        # seconds per sweep
+const RADAR_PERIOD := 7.2                        # seconds per sweep (slow: info goes stale)
 const RADAR_R := 112.0
 var sweep := 0.0
 var blips := {}          # Enemy -> [pos, time seen, is_big]
@@ -40,6 +40,12 @@ func _process(delta: float) -> void:
 
 
 func _radar_update(delta: float) -> void:
+	var _t0 := Time.get_ticks_usec()
+	_radar_update_body(delta)
+	G.pe("radar", _t0)
+
+
+func _radar_update_body(delta: float) -> void:
 	## Proximity sensor: hostile positions only refresh as the sweep passes.
 	if G.player == null or G.enemies == null:
 		return
@@ -127,6 +133,12 @@ func _panel(r: Rect2) -> void:
 
 
 func _draw() -> void:
+	var _t0 := Time.get_ticks_usec()
+	_draw_body()
+	G.pe("hud draw", _t0)
+
+
+func _draw_body() -> void:
 	var vs := size
 	if G.player == null:
 		return
@@ -136,6 +148,7 @@ func _draw() -> void:
 	_draw_radar(vs)
 	_draw_radio(vs)
 	_draw_director(vs)
+	_draw_fps(vs)
 	_draw_objective(vs)
 	if G.overworld:
 		_draw_overworld(vs)
@@ -261,6 +274,31 @@ func _draw_radio(vs: Vector2) -> void:
 		var a := clampf(1.3 - age / 25.0, 0.35, 1.0)
 		_txt(Vector2(r.position.x + 10, y), l.text, 12, Color(l.color, a), HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 20)
 		y += 15
+
+
+func _draw_fps(vs: Vector2) -> void:
+	var fps := Engine.get_frames_per_second()
+	var col := Color(0.5, 1, 0.6) if fps >= 110 else (C_AMBER if fps >= 55 else C_WARN)
+	var x := vs.x - 262.0
+	var y := 104.0 if G.show_director else 24.0
+	_txt(Vector2(x, y), "FPS %d · %.1f ms · %s (F1/F9)" % [fps, G.fps_ms, "fast" if G.render_fast else "sharp"], 13, col)
+	if not G.show_profiler:
+		return
+	var keys: Array = G.prof_avg.keys()
+	keys.sort_custom(func(a, b): return G.prof_avg[a] > G.prof_avg[b])
+	var r := Rect2(x - 8, y + 6, 258, 18 + keys.size() * 15 + 34)
+	draw_rect(r, C_PANEL)
+	var yy := y + 22
+	var total := 0.0
+	for k in keys:
+		total += G.prof_avg[k]
+		_txt(Vector2(x, yy), k, 11, C_DIM)
+		_txt(Vector2(x, yy), "%.2f ms" % G.prof_avg[k], 11, C_TEXT, HORIZONTAL_ALIGNMENT_RIGHT, 240)
+		yy += 15
+	_txt(Vector2(x, yy + 4), "scripts total", 11, C_AMBER)
+	_txt(Vector2(x, yy + 4), "%.2f ms" % total, 11, C_AMBER, HORIZONTAL_ALIGNMENT_RIGHT, 240)
+	var gpu := RenderingServer.get_frame_setup_time_cpu()
+	_txt(Vector2(x, yy + 20), "render setup %.2f ms · objects %d" % [gpu, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))], 10, C_DIM)
 
 
 func _draw_director(vs: Vector2) -> void:

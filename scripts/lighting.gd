@@ -1,151 +1,158 @@
 class_name Lighting
-extends Node2D
-## The zones are dark. Each mech projects a cone of light where it aims
-## (blocked by buildings), plus a small halo around its hull. Explosions
-## and muzzle flashes briefly light the area. Settlements burn beacons.
+extends Node
+## The zones are dark. Each mech projects a cone of light where it aims,
+## shadowed by buildings (ray-cast against the city grid), plus a small hull
+## halo. Explosions and muzzle flashes briefly light the area; settlements
+## burn beacons.
+##
+## Cheap by design: all light shapes are painted once per frame, additively,
+## into a half-resolution light map (a SubViewport), and the post filter
+## multiplies the scene by it in its single full-screen pass. No Light2D.
 ## Game logic uses the same cone (VIS_RANGE / VIS_HALF) to decide what the
-## squad can actually see — see EnemyManager.update_visibility().
+## squad can see — see EnemyManager._update_visibility().
 
 const VIS_RANGE := 520.0               # cone reach, px
 const VIS_HALF := deg_to_rad(32.0)     # half-angle of the cone
 const HALO := 95.0                     # always-lit radius around each hull
 const AMBIENT := Color(0.035, 0.045, 0.045)
+const CONE_RAYS := 30
+const HALO_RAYS := 20
+const MAP_SCALE := 0.5                 # light map resolution vs. the screen
 
-static var _cone_tex: ImageTexture
-static var _radial_tex: ImageTexture
-
-var cones := {}          # Mech -> PointLight2D
-var flashes: Array = []  # pool of {light, t, dur, energy}
-
-
-static func cone_texture() -> ImageTexture:
-	if _cone_tex:
-		return _cone_tex
-	var n := 512
-	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
-	var c := Vector2(n, n) * 0.5
-	var halo_r := HALO / VIS_RANGE
-	for y in n:
-		for x in n:
-			var v := (Vector2(x, y) - c) / (n * 0.5)
-			var r := v.length()
-			var a := 0.0
-			if r < 1.0:
-				var ang := absf(v.angle())
-				var edge := clampf((VIS_HALF - ang) / deg_to_rad(6.0), 0.0, 1.0)
-				a = pow(1.0 - r, 0.7) * edge
-				var halo := clampf(1.0 - r / halo_r, 0.0, 1.0)
-				a = maxf(a, halo * halo * 0.75)
-			img.set_pixel(x, y, Color(1, 1, 1, a))
-	_cone_tex = ImageTexture.create_from_image(img)
-	return _cone_tex
+var world: World
+var mechs: Array = []
+var flashes: Array = []                # {pos, r, t, dur, e}
+var beacons: Array = []                # [pos, radius, intensity]
+var vp: SubViewport
+var cam: Camera2D
+var painter: Painter
 
 
-static func radial_texture() -> ImageTexture:
-	if _radial_tex:
-		return _radial_tex
-	var g := Gradient.new()
-	g.set_color(0, Color(1, 1, 1, 1))
-	g.set_color(1, Color(1, 1, 1, 0))
-	var gt := GradientTexture2D.new()
-	gt.gradient = g
-	gt.fill = GradientTexture2D.FILL_RADIAL
-	gt.fill_from = Vector2(0.5, 0.5)
-	gt.fill_to = Vector2(1.0, 0.5)
-	gt.width = 256
-	gt.height = 256
-	var img := gt.get_image()
-	_radial_tex = ImageTexture.create_from_image(img)
-	return _radial_tex
+class Painter extends Node2D:
+	var lt: Lighting
+
+	func _draw() -> void:
+		lt.paint(self)
 
 
-func setup(world: World, mechs: Array) -> void:
-	var cm := CanvasModulate.new()
-	cm.color = AMBIENT
-	add_child(cm)
-	_add_occluders(world)
-	for m in mechs:
-		var l := PointLight2D.new()
-		l.texture = cone_texture()
-		l.texture_scale = VIS_RANGE / 256.0
-		l.energy = 1.25
-		l.color = Color(1.0, 0.97, 0.88).lerp(m.color, 0.18)
-		l.shadow_enabled = true
-		l.shadow_filter = Light2D.SHADOW_FILTER_PCF5
-		l.shadow_color = Color(0, 0, 0, 1)
-		add_child(l)
-		cones[m] = l
-	# settlement beacons
-	for z in [world.start_zone, world.goal_zone]:
-		var b := PointLight2D.new()
-		b.texture = radial_texture()
-		b.texture_scale = 4.2
-		b.energy = 1.1 if z == world.goal_zone else 0.7
-		b.color = Color(1.0, 0.72, 0.38)
-		b.position = z.get_center()
-		add_child(b)
-	for i in 10:
-		var fl := PointLight2D.new()
-		fl.texture = radial_texture()
-		fl.enabled = false
-		fl.color = Color(1.0, 0.68, 0.35)
-		add_child(fl)
-		flashes.append({"light": fl, "t": 0.0, "dur": 1.0, "energy": 0.0})
+func setup(p_world: World, p_mechs: Array) -> void:
+	world = p_world
+	mechs = p_mechs
+	beacons = [[world.goal_zone.get_center(), 520.0, 0.9], [world.start_zone.get_center(), 420.0, 0.55]]
+	vp = SubViewport.new()
+	vp.transparent_bg = true
+	vp.disable_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR
+	add_child(vp)
+	cam = Camera2D.new()
+	vp.add_child(cam)
+	cam.make_current()
+	painter = Painter.new()
+	painter.lt = self
+	var add := CanvasItemMaterial.new()
+	add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	painter.material = add
+	vp.add_child(painter)
+	_resize()
 
 
-func _add_occluders(world: World) -> void:
-	var rects: Array = world.buildings.duplicate()
-	# compound walls: one occluder per solid wall cell run is overkill; use cells
-	for wr in world.walls:
-		for x in range(wr.position.x, wr.end.x):
-			for y in range(wr.position.y, wr.end.y):
-				if world.is_solid(x, y):
-					rects.append(Rect2i(x, y, 1, 1))
-	for r in rects:
-		var o := LightOccluder2D.new()
-		var poly := OccluderPolygon2D.new()
-		var p := Vector2(r.position) * World.CELL
-		var s := Vector2(r.size) * World.CELL
-		poly.polygon = PackedVector2Array([p, p + Vector2(s.x, 0), p + s, p + Vector2(0, s.y)])
-		poly.cull_mode = OccluderPolygon2D.CULL_DISABLED
-		o.occluder = poly
-		add_child(o)
+func light_texture() -> Texture2D:
+	return vp.get_texture()
+
+
+func _resize() -> void:
+	var s := get_viewport().get_visible_rect().size * MAP_SCALE
+	var si := Vector2i(maxi(16, int(s.x)), maxi(16, int(s.y)))
+	if vp.size != si:
+		vp.size = si
 
 
 func flash(pos: Vector2, radius: float, strength: float = 1.0) -> void:
-	var best = flashes[0]
-	for f in flashes:
-		if not f.light.enabled:
-			best = f
-			break
-		if f.t / f.dur > best.t / best.dur:
-			best = f
-	best.light.enabled = true
-	best.light.position = pos
-	best.light.texture_scale = radius / 128.0
-	best.t = 0.0
-	best.dur = 0.35 + radius / 600.0
-	best.energy = 1.4 * strength
+	if flashes.size() > 24:
+		flashes.pop_front()
+	flashes.append({"pos": pos, "r": radius, "t": 0.0, "dur": 0.3 + radius / 700.0, "e": 1.3 * strength})
 
 
 func _process(delta: float) -> void:
-	for m in cones:
-		var l: PointLight2D = cones[m]
-		l.visible = m.alive
-		if m.alive:
-			l.position = m.position
-			l.rotation = m.aim_dir.angle()
-			# overheated / shut-down mechs dim their lamps
-			l.energy = 0.55 if m.overheated > 0.0 else 1.25
+	var t0 := Time.get_ticks_usec()
+	if vp == null or G.camera == null:
+		return
+	_resize()
+	# mirror the main camera at half resolution
+	cam.global_position = G.camera.get_screen_center_position()
+	cam.zoom = G.camera.zoom * MAP_SCALE
+	var keep: Array = []
 	for f in flashes:
-		if not f.light.enabled:
-			continue
 		f.t += delta
-		var k: float = f.t / f.dur
-		if k >= 1.0:
-			f.light.enabled = false
-		else:
-			f.light.energy = f.energy * (1.0 - k) * (1.0 - k)
+		if f.t < f.dur:
+			keep.append(f)
+	flashes = keep
+	painter.queue_redraw()
+	G.pe("lighting", t0)
+
+
+func paint(ci: CanvasItem) -> void:
+	var t0 := Time.get_ticks_usec()
+	var view: Rect2 = G.camera.view_rect().grow(VIS_RANGE)
+	for b in beacons:
+		if view.has_point(b[0]):
+			_radial(ci, b[0], b[1], Color(1.0, 0.72, 0.38) * b[2])
+	for m in mechs:
+		if not m.alive or not view.has_point(m.position):
+			continue
+		var tint: Color = Color(1.0, 0.97, 0.88).lerp(m.color, 0.18)
+		var e := 0.55 if m.overheated > 0.0 else 1.25
+		_cone(ci, m.position, m.aim_dir.angle(), tint * e)
+		_radial(ci, m.position, HALO, tint * 0.75)
+	for f in flashes:
+		var k: float = 1.0 - f.t / f.dur
+		_radial(ci, f.pos, f.r, Color(1.0, 0.68, 0.35) * (f.e * k * k))
+	G.pe(" · light rays", t0)
+
+
+func _cone(ci: CanvasItem, o: Vector2, ang: float, col: Color) -> void:
+	var pts := PackedVector2Array([o])
+	var cols := PackedColorArray([col])
+	for i in CONE_RAYS + 1:
+		var a := ang - VIS_HALF + (2.0 * VIS_HALF) * i / CONE_RAYS
+		var d := Vector2.from_angle(a)
+		var dist := world.ray_dist(o, d, VIS_RANGE)
+		# soft edge on the outermost rays
+		var edge := 1.0 if i > 1 and i < CONE_RAYS - 1 else 0.35
+		pts.append(o + d * dist)
+		cols.append(col * (1.0 - dist / VIS_RANGE) * edge)
+	_fan(ci, pts, cols)
+
+
+func _halo(ci: CanvasItem, o: Vector2, col: Color) -> void:
+	var pts := PackedVector2Array([o])
+	var cols := PackedColorArray([col])
+	for i in HALO_RAYS + 1:
+		var d := Vector2.from_angle(TAU * i / HALO_RAYS)
+		var dist := world.ray_dist(o, d, HALO)
+		pts.append(o + d * dist)
+		cols.append(col * (1.0 - dist / HALO) * 0.0)
+	_fan(ci, pts, cols)
+
+
+func _radial(ci: CanvasItem, o: Vector2, r: float, col: Color) -> void:
+	var pts := PackedVector2Array([o])
+	var cols := PackedColorArray([col])
+	for i in 25:
+		pts.append(o + Vector2.from_angle(TAU * i / 24.0) * r)
+		cols.append(Color(0, 0, 0))
+	_fan(ci, pts, cols)
+
+
+func _fan(ci: CanvasItem, pts: PackedVector2Array, cols: PackedColorArray) -> void:
+	## Triangle fan around pts[0]; explicit indices, so no triangulation step.
+	var idx := PackedInt32Array()
+	for i in range(1, pts.size() - 1):
+		idx.append(0)
+		idx.append(i)
+		idx.append(i + 1)
+	RenderingServer.canvas_item_add_triangle_array(ci.get_canvas_item(), idx, pts, cols)
 
 
 static func in_cone(m: Mech, p: Vector2) -> bool:
