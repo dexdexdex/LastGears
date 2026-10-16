@@ -12,6 +12,8 @@ var start_c := Vector2.ZERO           # px, centre of departure compound
 var goal_c := Vector2.ZERO            # px, centre of destination compound
 
 var blocked := PackedByteArray()      # 1 = solid (building / wall / border)
+var nmask := PackedByteArray()        # per cell: which of the 8 neighbours are solid (bits, see NMASK_OFS)
+const NMASK_OFS := [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]
 var near := PackedByteArray()         # 1 = solid or touching solid (needs real collision)
 var buildings: Array = []             # Array[Rect2i] in cells
 var walls: Array = []                 # Array[Rect2i] settlement walls
@@ -379,6 +381,49 @@ func circle_hits(p: Vector2, r: float) -> bool:
 	return false
 
 
+func move_small(p: Vector2, motion: Vector2, r: float) -> Vector2:
+	## move_circle for the swarm (r < CELL / 2). Most machines brushing a wall
+	## aren't walking into it, so try the whole move first (one test); only a
+	## blocked move falls back to the axis-separated slide.
+	var q := p + motion
+	if small_free(q, r):
+		return q
+	var out := p
+	q = Vector2(p.x + motion.x, p.y)
+	if small_free(q, r):
+		out = q
+	q = Vector2(out.x, out.y + motion.y)
+	if small_free(q, r):
+		out = q
+	return out
+
+
+func small_free(q: Vector2, r: float) -> bool:
+	## Is a circle of radius r (< CELL / 2) at q clear of solid cells?
+	## One neighbour-mask lookup plus a few compares.
+	if q.x < 0.0 or q.y < 0.0:
+		return false
+	var cx := int(q.x / CELL)
+	var cy := int(q.y / CELL)
+	if cx >= W or cy >= H:
+		return false
+	var i := cy * W + cx
+	if blocked[i] == 1:
+		return false
+	var m := nmask[i]
+	if m == 0:
+		return true
+	var fx := q.x - cx * CELL
+	var fy := q.y - cy * CELL
+	var gx := CELL - fx
+	var gy := CELL - fy
+	if (m & 1 and fx < r) or (m & 2 and gx < r) or (m & 4 and fy < r) or (m & 8 and gy < r):
+		return false
+	var r2 := r * r
+	return not ((m & 16 and fx * fx + fy * fy < r2) or (m & 32 and gx * gx + fy * fy < r2) \
+			or (m & 64 and fx * fx + gy * gy < r2) or (m & 128 and gx * gx + gy * gy < r2))
+
+
 func move_circle(p: Vector2, motion: Vector2, r: float) -> Vector2:
 	## Axis-separated slide against walls.
 	var out := p
@@ -478,8 +523,16 @@ func _build_astar() -> void:
 	astar.update()
 	near.resize(W * H)
 	near.fill(0)
+	nmask.resize(W * H)
+	nmask.fill(0)
 	for x in W:
 		for y in H:
+			var m := 0
+			for b in 8:
+				var o: Vector2i = NMASK_OFS[b]
+				if is_solid(x + o.x, y + o.y):
+					m |= 1 << b
+			nmask[y * W + x] = m
 			if is_solid(x, y):
 				astar.set_point_solid(Vector2i(x, y), true)
 				near[y * W + x] = 1

@@ -291,7 +291,7 @@ func _process_body(delta: float) -> void:
 					var cx := int(e.pos.x * inv_cell)
 					var cy := int(e.pos.y * inv_cell)
 					if cx < 1 or cy < 1 or cx >= ww - 1 or cy >= hh - 1 or near[cy * ww + cx] == 1:
-						e.pos = world.move_circle(e.pos, step, e.r)
+						e.pos = world.move_small(e.pos, step, e.r)
 					else:
 						e.pos += step
 	G.pe(" · pass2", t2)
@@ -413,7 +413,7 @@ func _move(e: Enemy, delta: float) -> void:
 			e.vel = Vector2.ZERO
 		return
 	if G.world.near_solid_at(e.pos):
-		e.pos = G.world.move_circle(e.pos, step, e.r)
+		e.pos = G.world.move_small(e.pos, step, e.r)
 	else:
 		e.pos += step
 

@@ -184,7 +184,9 @@ Crawlers and skitters further than ~300 px from the squad move in packs: every
 machine in the same grid cell shares one decision (target, line of sight,
 heading), and the cells grow with distance (64 px near, 128 px mid, 256 px
 far), so the distant swarm is a few big blobs that each cost one decision.
-Close in they break off and think for themselves. F4 outlines the packs.
+Close in they break off and think for themselves. F4 outlines the packs. Swarm wall collision uses a per-cell mask of
+solid neighbours: the whole move is tested first (one lookup and a few
+compares) and only a blocked move falls back to sliding along the wall.
 `-- --stress=3000` spawns 3000 awake machines around an invulnerable squad for
 benchmarking. The flow
 field that steers the swarm is rebuilt a slice per frame so it never hitches.
