@@ -100,9 +100,9 @@ func _perf_write(line: String) -> void:
 			return
 		_perf_file.seek_end()
 		var scr := DisplayServer.window_get_current_screen()
-		_perf_file.store_line("\n=== session %s · %s · %s · GPU %s · screen %s @ %.0f Hz · window %s ===" % [
+		_perf_file.store_line("\n=== session %s · %s · %s · %s · GPU %s · screen %s @ %.0f Hz · window %s ===" % [
 			Time.get_datetime_string_from_system(), OS.get_name(), Engine.get_version_info().string,
-			RenderingServer.get_video_adapter_name(), str(DisplayServer.screen_get_size(scr)),
+			RenderingServer.get_current_rendering_method(), RenderingServer.get_video_adapter_name(), str(DisplayServer.screen_get_size(scr)),
 			DisplayServer.screen_get_refresh_rate(scr), str(get_viewport().get_visible_rect().size)])
 	_perf_file.store_line(line)
 	_perf_file.flush()

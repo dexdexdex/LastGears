@@ -173,6 +173,17 @@ The city is drawn in 600 px chunks so off-screen chunks are culled, and
 enemies, shots and pickups only draw on screen. Darkness doesn't use Light2D:
 cones are ray-cast against the grid and painted once into a half-resolution
 light map that the post shader multiplies in. F1 shows the per-system cost.
+Draw calls are kept low: city chunks near the camera are baked once into
+textures (one quad each), every machine and radar blip is the same batched
+dot sprite, tracers and shards go out in one multi-line call, and the static
+HUD renders offscreen ~20x/s and is a single quad in between.
+
+On a Mac you can also try Godot's native Metal renderer (it falls back to
+OpenGL automatically if unavailable):
+
+```sh
+~/bin/godot --path ~/Projects/LastGears --rendering-method mobile
+```
 
 While you play, a `[perf]` line goes to the terminal (and is appended to
 `perf.log` in the project folder, git-ignored) every 5 s, and every second

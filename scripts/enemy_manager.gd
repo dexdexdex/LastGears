@@ -51,6 +51,7 @@ class Enemy:
 	var awake := true          # dormant swarm fields idle until something comes close
 	var wander := Vector2.ZERO
 	var want := Vector2.ZERO   # desired velocity, set by the (time-sliced) think step
+	var mdt := 0.0             # off-screen: movement time banked for the next step
 	var skip := 0              # LOD: far machines skip think slots...
 	var acc := 0.0             # ...and get the skipped time when they do think
 	var seen := false          # inside some squad mech's vision cone right now
@@ -126,6 +127,8 @@ func _process_body(delta: float) -> void:
 	var think_dt := delta * k
 	var n := list.size()
 	var tt := Time.get_ticks_usec()
+	var onscreen := G.camera.view_rect().grow(160.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
+	var parity := Engine.get_process_frames() % 2
 	for i in n:
 		var e: Enemy = list[i]
 		if not e.alive:
@@ -142,7 +145,12 @@ func _process_body(delta: float) -> void:
 					continue
 		if not e.awake and e.want == Vector2.ZERO and e.vel == Vector2.ZERO and e.flash <= 0.0:
 			continue
-		_move(e, delta)
+		# off screen nobody sees the motion: step every other frame with double dt
+		if (i & 1) != parity and not onscreen.has_point(e.pos):
+			e.mdt += delta
+			continue
+		_move(e, delta + e.mdt)
+		e.mdt = 0.0
 	G.pe(" · think+move", tt)
 	if deaths > 0:
 		deaths = 0
@@ -254,6 +262,10 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 				checked += 1
 				if checked > 10:
 					break
+			if checked > 10:
+				break
+		if checked > 10:
+			break
 	if e.d.has("melee") and desired == Vector2.ZERO:
 		e.want = sep * 90.0
 	else:
@@ -430,34 +442,68 @@ func _draw() -> void:
 	G.pe("enemies draw", _t0)
 
 
+static var _dot: ImageTexture
+
+
+static func dot_texture() -> ImageTexture:
+	## One shared soft-edged dot, so every machine batches into a single draw.
+	if _dot:
+		return _dot
+	var n := 32
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var c := Vector2(n, n) * 0.5 - Vector2(0.5, 0.5)
+	for y in n:
+		for x in n:
+			var d := Vector2(x, y).distance_to(c) / (n * 0.5)
+			img.set_pixel(x, y, Color(1, 1, 1, clampf((1.0 - d) * 6.0, 0.0, 1.0)))
+	_dot = ImageTexture.create_from_image(img)
+	return _dot
+
+
 func _draw_body() -> void:
 	var tsec := Time.get_ticks_msec() / 1000.0
 	var view := G.camera.view_rect().grow(30.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
+	var dot := dot_texture()
+	var specials: Array = []
+	# pass 1: every body as a textured dot (one batch)
 	for e in list:
 		if not view.has_point(e.pos):
 			continue
 		var c: Color = e.d.color
 		if e.flash > 0.0:
 			c = c.lerp(Color.WHITE, e.flash)
+		var r: float = e.r
 		match e.type:
 			"crawler":
-				draw_circle(e.pos, e.r, c if e.awake else c.darkened(0.35))
-			"skitter":
-				draw_circle(e.pos, e.r, c)
-			"spitter":
-				draw_circle(e.pos, e.r, c)
-				draw_circle(e.pos, e.r * 0.45, Color(0.15, 0.05, 0.0))
+				if not e.awake:
+					c = c.darkened(0.35)
 			"tick":
 				var blink := 0.5 + 0.5 * sin(e.t * (10.0 + 20.0 * float(e.los)))
-				draw_circle(e.pos, e.r, c.lerp(Color.WHITE, blink * 0.6))
-				draw_arc(e.pos, e.r + 2.0, 0, TAU, 10, Color(1, 0.9, 0.3, 0.4 * blink), 1.0)
+				c = c.lerp(Color.WHITE, blink * 0.6)
+				specials.append(e)
+			"warden", "spitter":
+				specials.append(e)
+				if e.type == "warden":
+					continue
+		draw_texture_rect(dot, Rect2(e.pos - Vector2(r, r), Vector2(r, r) * 2.0), false, c)
+	# pass 2: the few machines with extra detail
+	for e in specials:
+		var c2: Color = e.d.color
+		match e.type:
+			"spitter":
+				draw_texture_rect(dot, Rect2(e.pos - Vector2(1.8, 1.8), Vector2(3.6, 3.6)), false, Color(0.15, 0.05, 0.0))
+			"tick":
+				var blink2 := 0.5 + 0.5 * sin(e.t * (10.0 + 20.0 * float(e.los)))
+				draw_arc(e.pos, e.r + 2.0, 0, TAU, 10, Color(1, 0.9, 0.3, 0.4 * blink2), 1.0)
 			"warden":
+				if e.flash > 0.0:
+					c2 = c2.lerp(Color.WHITE, e.flash)
 				var a: float = e.vel.angle() if e.vel.length() > 1.0 else 0.0
 				var pts := PackedVector2Array()
 				for i in 4:
 					pts.append(e.pos + Vector2.from_angle(a + TAU * i / 4.0) * e.r * (1.3 if i % 2 == 0 else 0.9))
-				draw_colored_polygon(pts, c.darkened(0.3))
+				draw_colored_polygon(pts, c2.darkened(0.3))
 				pts.append(pts[0])
-				draw_polyline(pts, c, 1.5)
-				draw_arc(e.pos, e.r + 4.0, -PI / 2, -PI / 2 + TAU * e.hp / e.max_hp, 20, Color(c, 0.6), 1.5)
+				draw_polyline(pts, c2, 1.5)
+				draw_arc(e.pos, e.r + 4.0, -PI / 2, -PI / 2 + TAU * e.hp / e.max_hp, 20, Color(c2, 0.6), 1.5)
 				draw_circle(e.pos, 2.0, Color(1, 1, 1, 0.5 + 0.5 * sin(tsec * 6.0)))

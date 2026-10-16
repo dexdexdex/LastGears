@@ -199,7 +199,7 @@ func _process(delta: float) -> void:
 			var parts: Array = []
 			for k in G.prof_avg:
 				parts.append("%s %.2f" % [k, G.prof_avg[k]])
-			print("[prof] frame %.2f ms | %s" % [G.fps_ms, ", ".join(parts)])
+			print("[prof] frame %.2f ms draws %d | %s" % [G.fps_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), ", ".join(parts)])
 
 
 func _formation_input() -> void:

@@ -22,7 +22,30 @@ func _ready() -> void:
 	G.banner.connect(func(t, c):
 		banner_text = t
 		banner_color = c
-		banner_t = 3.5)
+		banner_t = 3.5
+		_static_t = 0.0)
+	# The static layer renders into an offscreen texture only when it changes
+	# (~20x/s); every frame in between it's a single textured quad.
+	static_vp = SubViewport.new()
+	static_vp.transparent_bg = true
+	static_vp.disable_3d = true
+	static_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(static_vp)
+	static_layer = Layer.new()
+	static_layer.hud = self
+	static_vp.add_child(static_layer)
+	static_view = TextureRect.new()
+	static_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	static_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	static_view.texture = static_vp.get_texture()
+	var pm := CanvasItemMaterial.new()
+	pm.blend_mode = CanvasItemMaterial.BLEND_MODE_PREMULT_ALPHA
+	static_view.material = pm
+	add_child(static_view)
+	live_layer = Layer.new()
+	live_layer.hud = self
+	live_layer.live = true
+	add_child(live_layer)
 
 
 const RADAR_RANGES := [700.0, 1400.0, 2800.0]   # px; Q / R2 cycles
@@ -36,7 +59,17 @@ func _process(delta: float) -> void:
 	banner_t = maxf(0.0, banner_t - delta)
 	if not get_tree().paused and G.game_state == "play":
 		_radar_update(delta)
-	queue_redraw()
+	if live_layer:
+		live_layer.queue_redraw()
+	_static_t -= delta
+	if static_layer and (_static_t <= 0.0 or G.overworld):
+		_static_t = 1.0 / STATIC_HZ
+		var sz := Vector2i(size)
+		if static_vp.size != sz:
+			static_vp.size = sz
+			static_layer.size = size
+		static_layer.queue_redraw()
+		static_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 func _radar_update(delta: float) -> void:
@@ -73,16 +106,24 @@ func _draw_radar(vs: Vector2) -> void:
 	var k := R / rng
 	var pc := G.player.position
 	var green := Color(0.45, 1.0, 0.6)
-	draw_circle(c, R + 6, Color(0, 0, 0, 0.6))
-	draw_circle(c, R, Color(0.02, 0.07, 0.045, 0.92))
+	var dot := EnemyManager.dot_texture()
+	ci.draw_circle(c, R + 6, Color(0, 0, 0, 0.6))
+	ci.draw_circle(c, R, Color(0.02, 0.07, 0.045, 0.92))
 	for f in [1.0 / 3.0, 2.0 / 3.0, 1.0]:
-		draw_arc(c, R * f, 0, TAU, 48, Color(green, 0.18 if f < 1.0 else 0.45), 1.0)
-	draw_line(c - Vector2(R, 0), c + Vector2(R, 0), Color(green, 0.1), 1.0)
-	draw_line(c - Vector2(0, R), c + Vector2(0, R), Color(green, 0.1), 1.0)
-	# sweep wedge
-	for i in 28:
-		var a := sweep - i * 0.025
-		draw_line(c, c + Vector2.from_angle(a) * R, Color(green, 0.32 * (1.0 - i / 28.0)), 2.0)
+		ci.draw_arc(c, R * f, 0, TAU, 48, Color(green, 0.18 if f < 1.0 else 0.45), 1.0)
+	ci.draw_line(c - Vector2(R, 0), c + Vector2(R, 0), Color(green, 0.1), 1.0)
+	ci.draw_line(c - Vector2(0, R), c + Vector2(0, R), Color(green, 0.1), 1.0)
+	# sweep wedge: one fan, fading behind the beam
+	var wp := PackedVector2Array([c])
+	var wc := PackedColorArray([Color(green, 0.3)])
+	for i in 15:
+		wp.append(c + Vector2.from_angle(sweep - i * 0.05) * R)
+		wc.append(Color(green, 0.32 * (1.0 - i / 14.0)))
+	var widx := PackedInt32Array()
+	for i in range(1, wp.size() - 1):
+		widx.append_array([0, i, i + 1])
+	RenderingServer.canvas_item_add_triangle_array(ci.get_canvas_item(), widx, wp, wc)
+	ci.draw_line(c, c + Vector2.from_angle(sweep) * R, Color(green, 0.6), 1.5)
 	# hostile blips (stale positions, fading until the sweep comes round again)
 	for e in blips:
 		var b: Array = blips[e]
@@ -91,16 +132,17 @@ func _draw_radar(vs: Vector2) -> void:
 			continue
 		var age := clampf((G.game_time - b[1]) / RADAR_PERIOD, 0.0, 1.0)
 		var col := Color(1, 0.3, 0.25, 1.0 - age * 0.85)
-		draw_circle(c + v, 3.5 if b[2] else 1.8, col)
+		var br := 3.5 if b[2] else 2.0
+		ci.draw_texture_rect(dot, Rect2(c + v - Vector2(br, br), Vector2(br, br) * 2.0), false, col)
 	# destination
 	var gv := (G.world.goal_c - pc) * k
 	var gcol := Color(1, 0.82, 0.4)
 	if gv.length() < R - 6:
-		draw_rect(Rect2(c + gv - Vector2(4, 4), Vector2(8, 8)), gcol, false, 1.5)
+		ci.draw_rect(Rect2(c + gv - Vector2(4, 4), Vector2(8, 8)), gcol, false, 1.5)
 	else:
 		var gd := gv.normalized()
 		var tip := c + gd * (R + 2)
-		draw_colored_polygon(PackedVector2Array([tip + gd * 8, tip + gd.orthogonal() * 5, tip - gd.orthogonal() * 5]), gcol)
+		ci.draw_colored_polygon(PackedVector2Array([tip + gd * 8, tip + gd.orthogonal() * 5, tip - gd.orthogonal() * 5]), gcol)
 	# squad (live) with aim ticks
 	for m in G.squad:
 		if not m.alive:
@@ -108,47 +150,80 @@ func _draw_radar(vs: Vector2) -> void:
 		var v2: Vector2 = (m.position - pc) * k
 		if v2.length() > R:
 			v2 = v2.normalized() * R
-		draw_line(c + v2, c + v2 + m.aim_dir * 10.0, Color(m.color, 0.8), 1.5)
-		draw_circle(c + v2, 3.5 if m.is_player else 3.0, m.color)
+		ci.draw_line(c + v2, c + v2 + m.aim_dir * 10.0, Color(m.color, 0.8), 1.5)
+		ci.draw_circle(c + v2, 3.5 if m.is_player else 3.0, m.color)
 	var rm := int(rng * 0.25)
 	_txt(Vector2(c.x - R, c.y - R - 8), "RADAR · %d m · Q" % rm, 10, C_DIM)
 	_txt(Vector2(c.x + R - 70, c.y - R - 8), "%d contacts" % blips.size(), 10, Color(1, 0.4, 0.3, 0.9))
 
 
 func _txt(p: Vector2, s: String, size: int = 13, col: Color = C_TEXT, align := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
-	draw_string(font, p, s, align, w, size, col)
+	ci.draw_string(font, p, s, align, w, size, col)
 
 
 func _bar(r: Rect2, frac: float, col: Color, bg := Color(0, 0, 0, 0.5)) -> void:
-	draw_rect(r, bg)
-	draw_rect(Rect2(r.position, Vector2(r.size.x * clampf(frac, 0, 1), r.size.y)), col)
+	ci.draw_rect(r, bg)
+	ci.draw_rect(Rect2(r.position, Vector2(r.size.x * clampf(frac, 0, 1), r.size.y)), col)
 
 
 func _panel(r: Rect2) -> void:
-	draw_rect(r, C_PANEL)
-	draw_rect(r, C_LINE, false, 1.0)
+	ci.draw_rect(r, C_PANEL)
+	ci.draw_rect(r, C_LINE, false, 1.0)
 	# corner ticks
 	for c in [r.position, Vector2(r.end.x, r.position.y), Vector2(r.position.x, r.end.y), r.end]:
-		draw_rect(Rect2(c - Vector2(2, 2), Vector2(4, 4)), C_LINE.lightened(0.3))
+		ci.draw_rect(Rect2(c - Vector2(2, 2), Vector2(4, 4)), C_LINE.lightened(0.3))
 
 
-func _draw() -> void:
-	var _t0 := Time.get_ticks_usec()
-	_draw_body()
-	G.pe("hud draw", _t0)
+# Two layers: STATIC (panels, text, map — redrawn ~20x/s) and LIVE (radar
+# sweep, crosshair, FPS — redrawn every frame). Draw calls go through `ci`.
+var ci: CanvasItem = self
+var static_layer: Layer
+var static_vp: SubViewport
+var static_view: TextureRect
+var live_layer: Layer
+var _static_t := 0.0
+const STATIC_HZ := 20.0
 
 
-func _draw_body() -> void:
+class Layer extends Control:
+	var hud: Hud
+	var live := false
+
+	func _ready() -> void:
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var t0 := Time.get_ticks_usec()
+		hud.ci = self
+		if live:
+			hud.draw_live()
+		else:
+			hud.draw_static()
+		hud.ci = hud
+		G.pe("hud live" if live else "hud static", t0)
+
+
+func draw_live() -> void:
+	var vs := size
+	if G.player == null or G.game_state == "station":
+		return
+	if not G.overworld:
+		_draw_radar(vs)
+	_draw_fps(vs)
+	if G.using_mouse and not get_tree().paused:
+		_draw_crosshair(get_local_mouse_position())
+
+
+func draw_static() -> void:
 	var vs := size
 	if G.player == null:
 		return
 	_draw_materials(vs)
 	_draw_squad(vs)
 	_draw_player(vs)
-	_draw_radar(vs)
 	_draw_radio(vs)
 	_draw_director(vs)
-	_draw_fps(vs)
 	_draw_objective(vs)
 	if G.overworld:
 		_draw_overworld(vs)
@@ -156,18 +231,16 @@ func _draw_body() -> void:
 	if banner_t > 0.0:
 		var a := clampf(banner_t, 0, 1)
 		var y := vs.y * 0.3
-		draw_rect(Rect2(0, y - 30, vs.x, 44), Color(0, 0, 0, 0.45 * a))
+		ci.draw_rect(Rect2(0, y - 30, vs.x, 44), Color(0, 0, 0, 0.45 * a))
 		_txt(Vector2(0, y), banner_text, 26, Color(banner_color, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 	if G.game_state == "station":
 		return
 	if G.game_state != "play":
 		_draw_end(vs)
 	elif get_tree().paused:
-		draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.5))
+		ci.draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.5))
 		_txt(Vector2(0, vs.y * 0.45), "PAUSED", 40, C_AMBER, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 		_txt(Vector2(0, vs.y * 0.45 + 34), "Enter to resume · F5 restart", 14, C_DIM, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	if G.using_mouse and not get_tree().paused:
-		_draw_crosshair(get_local_mouse_position())
 
 
 func _draw_materials(vs: Vector2) -> void:
@@ -175,7 +248,7 @@ func _draw_materials(vs: Vector2) -> void:
 	_panel(r)
 	var x := r.position.x + 18
 	for k in ["scrap", "circuits", "cells"]:
-		draw_rect(Rect2(x, 20, 8, 8), G.MATERIAL_COLORS[k])
+		ci.draw_rect(Rect2(x, 20, 8, 8), G.MATERIAL_COLORS[k])
 		_txt(Vector2(x + 14, 30), "%s %d" % [G.MATERIAL_NAMES[k], G.materials.get(k, 0)], 14, G.MATERIAL_COLORS[k])
 		x += 130
 
@@ -186,7 +259,7 @@ func _draw_squad(_vs: Vector2) -> void:
 		var r := Rect2(12, y, 250, 52)
 		_panel(r)
 		var col: Color = m.color if m.alive else C_DIM
-		draw_rect(Rect2(r.position, Vector2(4, r.size.y)), col)
+		ci.draw_rect(Rect2(r.position, Vector2(4, r.size.y)), col)
 		var title := "%s  ·  %s" % [m.callsign, m.pilot]
 		_txt(r.position + Vector2(12, 16), title, 13, col)
 		var tag: String = ("YOU" if m.is_player else m.role_tag).to_upper()
@@ -287,7 +360,7 @@ func _draw_fps(vs: Vector2) -> void:
 	var keys: Array = G.prof_avg.keys()
 	keys.sort_custom(func(a, b): return G.prof_avg[a] > G.prof_avg[b])
 	var r := Rect2(x - 8, y + 6, 258, 18 + keys.size() * 15 + 34)
-	draw_rect(r, C_PANEL)
+	ci.draw_rect(r, C_PANEL)
 	var yy := y + 22
 	var total := 0.0
 	for k in keys:
@@ -334,7 +407,7 @@ func _draw_objective(vs: Vector2) -> void:
 		var c := vs * 0.5
 		var edge := c + dir * Vector2(vs.x * 0.45, vs.y * 0.42)
 		var pts := PackedVector2Array([edge + dir * 12, edge + dir.orthogonal() * 7, edge - dir.orthogonal() * 7])
-		draw_colored_polygon(pts, Color(C_AMBER, 0.75))
+		ci.draw_colored_polygon(pts, Color(C_AMBER, 0.75))
 
 
 func _draw_map(vs: Vector2) -> void:
@@ -344,27 +417,27 @@ func _draw_map(vs: Vector2) -> void:
 	var scale := minf(3.4, (vs.x - 560.0) / tex.get_width())
 	var msz := Vector2(tex.get_width(), tex.get_height()) * scale
 	var r := Rect2(Vector2(vs.x - msz.x - 16, 96), msz)
-	draw_rect(r.grow(8), Color(0, 0, 0, 0.75 * a))
-	draw_texture_rect(tex, r, false, Color(1, 1, 1, a))
-	draw_rect(r.grow(8), Color(C_LINE, a), false, 1.0)
+	ci.draw_rect(r.grow(8), Color(0, 0, 0, 0.75 * a))
+	ci.draw_texture_rect(tex, r, false, Color(1, 1, 1, a))
+	ci.draw_rect(r.grow(8), Color(C_LINE, a), false, 1.0)
 	_txt(r.position + Vector2(0, -12), "ZONE SURVEY — %s → %s" % [G.world.from_name.to_upper(), G.world.to_name.to_upper()], 11, Color(C_TEXT, a))
 	var k := scale / World.CELL
 	var sa := Rect2(r.position + G.world.start_zone.position * k, G.world.start_zone.size * k)
 	var sb := Rect2(r.position + G.world.goal_zone.position * k, G.world.goal_zone.size * k)
-	draw_rect(sa, Color(0.6, 0.8, 0.6, 0.7 * a), false, 1.5)
-	draw_rect(sb, Color(1, 0.8, 0.4, 0.9 * a), false, 1.5)
+	ci.draw_rect(sa, Color(0.6, 0.8, 0.6, 0.7 * a), false, 1.5)
+	ci.draw_rect(sb, Color(1, 0.8, 0.4, 0.9 * a), false, 1.5)
 	_txt(sa.position + Vector2(0, -3), G.world.from_name.to_upper(), 9, Color(0.6, 0.8, 0.6, a))
 	_txt(sb.position + Vector2(-30, -3), G.world.to_name.to_upper(), 9, Color(1, 0.8, 0.4, a))
 	for it in G.pickups.items:
 		if it.kind == "cache":
-			draw_rect(Rect2(r.position + it.pos * k - Vector2(1.5, 1.5), Vector2(3, 3)), Color(1, 0.8, 0.35, 0.8 * a))
+			ci.draw_rect(Rect2(r.position + it.pos * k - Vector2(1.5, 1.5), Vector2(3, 3)), Color(1, 0.8, 0.35, 0.8 * a))
 	for e in G.enemies.list:
-		draw_rect(Rect2(r.position + e.pos * k - Vector2(1, 1), Vector2(2, 2)), Color(e.d.color, 0.8 * a))
+		ci.draw_rect(Rect2(r.position + e.pos * k - Vector2(1, 1), Vector2(2, 2)), Color(e.d.color, 0.8 * a))
 	for m in G.squad:
 		if m.alive:
-			draw_circle(r.position + m.position * k, 3.0 if m.is_player else 2.2, Color(m.color, a))
+			ci.draw_circle(r.position + m.position * k, 3.0 if m.is_player else 2.2, Color(m.color, a))
 	var view := G.camera.view_rect()
-	draw_rect(Rect2(r.position + view.position * k, view.size * k), Color(1, 1, 1, 0.3 * a), false, 1.0)
+	ci.draw_rect(Rect2(r.position + view.position * k, view.size * k), Color(1, 1, 1, 0.3 * a), false, 1.0)
 
 
 const KIND_COL := {
@@ -381,23 +454,23 @@ func _draw_overworld(vs: Vector2) -> void:
 	if at == null:
 		return
 	var tsec := Time.get_ticks_msec() / 1000.0
-	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.02, 0.035, 0.03, 0.94))
+	ci.draw_rect(Rect2(Vector2.ZERO, vs), Color(0.02, 0.035, 0.03, 0.94))
 	var r := Rect2(Vector2(70, 110), vs - Vector2(140, 210))
 	# survey grid + faint contours
 	var gc := Color(0.4, 0.55, 0.4, 0.06)
 	for i in 21:
 		var gx := r.position.x + r.size.x * i / 20.0
-		draw_line(Vector2(gx, r.position.y), Vector2(gx, r.end.y), gc, 1.0)
+		ci.draw_line(Vector2(gx, r.position.y), Vector2(gx, r.end.y), gc, 1.0)
 	for i in 13:
 		var gy := r.position.y + r.size.y * i / 12.0
-		draw_line(Vector2(r.position.x, gy), Vector2(r.end.x, gy), gc, 1.0)
+		ci.draw_line(Vector2(r.position.x, gy), Vector2(r.end.x, gy), gc, 1.0)
 	var cr := RandomNumberGenerator.new()
 	cr.seed = 77
 	for i in 9:
 		var c := r.position + Vector2(cr.randf(), cr.randf()) * r.size
 		for k in 4:
-			draw_arc(c, 40.0 + k * 34.0 + cr.randf() * 10.0, 0, TAU, 48, Color(0.45, 0.6, 0.45, 0.05), 1.0)
-	draw_rect(r, C_LINE, false, 1.0)
+			ci.draw_arc(c, 40.0 + k * 34.0 + cr.randf() * 10.0, 0, TAU, 48, Color(0.45, 0.6, 0.45, 0.05), 1.0)
+	ci.draw_rect(r, C_LINE, false, 1.0)
 	_txt(Vector2(r.position.x, r.position.y - 46), "THE LONG ROAD — REGIONAL NETWORK", 22, C_AMBER)
 	_txt(Vector2(r.position.x, r.position.y - 24), "Havens, outposts and the machine-held ground between them.   Q / M / touchpad: close   ·   the fight keeps running while you look", 12, C_DIM)
 
@@ -406,8 +479,8 @@ func _draw_overworld(vs: Vector2) -> void:
 	for n in at.nodes:
 		if n.kind == "hive":
 			var hp: Vector2 = r.position + n.pos * r.size
-			draw_circle(hp, r.size.x * 0.065, Color(1, 0.25, 0.2, 0.035))
-			draw_circle(hp, r.size.x * 0.035, Color(1, 0.25, 0.2, 0.05))
+			ci.draw_circle(hp, r.size.x * 0.065, Color(1, 0.25, 0.2, 0.035))
+			ci.draw_circle(hp, r.size.x * 0.035, Color(1, 0.25, 0.2, 0.05))
 	# zones (edges)
 	for i in at.edges.size():
 		var e: Dictionary = at.edges[i]
@@ -416,12 +489,12 @@ func _draw_overworld(vs: Vector2) -> void:
 		var is_cur: bool = i == at.current_edge
 		var tcol := Color(0.55, 0.65, 0.55).lerp(Color(1, 0.35, 0.28), (e.threat - 1) / 4.0)
 		if is_cur:
-			draw_line(a, b, Color(C_AMBER, 0.25), 9.0)
-			draw_line(a, b, C_AMBER, 2.5)
+			ci.draw_line(a, b, Color(C_AMBER, 0.25), 9.0)
+			ci.draw_line(a, b, C_AMBER, 2.5)
 		elif e.known:
-			draw_line(a, b, Color(tcol, 0.75), 1.6)
+			ci.draw_line(a, b, Color(tcol, 0.75), 1.6)
 		else:
-			draw_dashed_line(a, b, Color(0.5, 0.55, 0.5, 0.35), 1.2, 7.0)
+			ci.draw_dashed_line(a, b, Color(0.5, 0.55, 0.5, 0.35), 1.2, 7.0)
 		var mid := (a + b) * 0.5
 		var lab: String = e.zone if (e.known or is_cur) else "unscouted"
 		var lcol := C_AMBER if is_cur else (Color(tcol, 0.9) if e.known else Color(C_DIM, 0.6))
@@ -429,7 +502,7 @@ func _draw_overworld(vs: Vector2) -> void:
 		if e.known or is_cur:
 			for k in 5:
 				var pc := tcol if k < e.threat else Color(0.3, 0.33, 0.3, 0.6)
-				draw_rect(Rect2(mid + Vector2(-17 + k * 7, 2), Vector2(5, 4)), pc)
+				ci.draw_rect(Rect2(mid + Vector2(-17 + k * 7, 2), Vector2(5, 4)), pc)
 	# squad marker along the current zone
 	var ce: Dictionary = at.current()
 	var sa: Vector2 = P.call(at.start_idx)
@@ -437,8 +510,8 @@ func _draw_overworld(vs: Vector2) -> void:
 	var prog := G.world.progress_of(G.squad_centroid()) if G.world else 0.0
 	var sp := sa.lerp(sb, prog)
 	var pulse := 0.5 + 0.5 * sin(tsec * 5.0)
-	draw_circle(sp, 6.0 + pulse * 3.0, Color(0.45, 0.85, 1.0, 0.25))
-	draw_circle(sp, 5.0, Color(0.45, 0.85, 1.0))
+	ci.draw_circle(sp, 6.0 + pulse * 3.0, Color(0.45, 0.85, 1.0, 0.25))
+	ci.draw_circle(sp, 5.0, Color(0.45, 0.85, 1.0))
 	_txt(sp + Vector2(9, -8), "SQUAD (%d)" % G.alive_squad().size(), 11, Color(0.6, 0.9, 1.0))
 	# nodes
 	var hover := -1
@@ -449,22 +522,22 @@ func _draw_overworld(vs: Vector2) -> void:
 		var col: Color = KIND_COL[n.kind]
 		match n.kind:
 			"haven":
-				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col.darkened(0.6))
-				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col, false, 2.0)
-				draw_circle(p, 2.5, col)
+				ci.draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col.darkened(0.6))
+				ci.draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col, false, 2.0)
+				ci.draw_circle(p, 2.5, col)
 			"outpost":
-				draw_rect(Rect2(p - Vector2(6, 6), Vector2(12, 12)), col, false, 1.5)
+				ci.draw_rect(Rect2(p - Vector2(6, 6), Vector2(12, 12)), col, false, 1.5)
 			"hive":
 				var hr := 8.0 + 2.0 * sin(tsec * 3.0 + i)
 				var pts := PackedVector2Array()
 				for k in 6:
 					pts.append(p + Vector2.from_angle(TAU * k / 6.0 + tsec * 0.3) * hr)
-				draw_colored_polygon(pts, col.darkened(0.5))
+				ci.draw_colored_polygon(pts, col.darkened(0.5))
 				pts.append(pts[0])
-				draw_polyline(pts, col, 1.5)
+				ci.draw_polyline(pts, col, 1.5)
 			"ruin":
-				draw_circle(p, 6.0, col.darkened(0.6))
-				draw_arc(p, 6.0, 0, TAU, 16, col, 1.2)
+				ci.draw_circle(p, 6.0, col.darkened(0.6))
+				ci.draw_arc(p, 6.0, 0, TAU, 16, col, 1.2)
 		var ncol := col if n.kind != "ruin" else col.lightened(0.2)
 		_txt(p + Vector2(12, 4), n.name, 13 if n.kind == "haven" else 11, ncol)
 		if i == at.start_idx or i == at.goal_idx:
@@ -477,16 +550,16 @@ func _draw_overworld(vs: Vector2) -> void:
 		var box := Rect2(bp, Vector2(250, 58))
 		if box.end.x > vs.x - 10:
 			box.position.x -= 280
-		draw_rect(box, Color(0.02, 0.04, 0.03, 0.95))
-		draw_rect(box, KIND_COL[n2.kind], false, 1.0)
+		ci.draw_rect(box, Color(0.02, 0.04, 0.03, 0.95))
+		ci.draw_rect(box, KIND_COL[n2.kind], false, 1.0)
 		_txt(box.position + Vector2(8, 16), "%s · %s" % [n2.name, n2.kind.to_upper()], 12, KIND_COL[n2.kind])
 		if n2.pop > 0:
 			_txt(box.position + Vector2(8, 32), "pop. %d" % n2.pop, 11, C_TEXT)
 		_txt(box.position + Vector2(8, 48), n2.note, 11, C_DIM)
 	# current leg readout
 	var pr := Rect2(Vector2(r.position.x, r.end.y + 14), Vector2(560, 56))
-	draw_rect(pr, C_PANEL)
-	draw_rect(pr, C_LINE, false, 1.0)
+	ci.draw_rect(pr, C_PANEL)
+	ci.draw_rect(pr, C_LINE, false, 1.0)
 	_txt(pr.position + Vector2(10, 18), "CURRENT LEG  %s → %s" % [at.nodes[at.start_idx].name, at.nodes[at.goal_idx].name], 12, C_AMBER)
 	_txt(pr.position + Vector2(10, 36), "Zone: %s  ·  %s  ·  threat %d/5" % [ce.zone, ce.terrain, ce.threat], 12, C_TEXT)
 	_bar(Rect2(pr.position + Vector2(10, 44), Vector2(540, 4)), prog, C_AMBER)
@@ -494,14 +567,14 @@ func _draw_overworld(vs: Vector2) -> void:
 	var lx := r.end.x - 420
 	var ly := r.end.y + 34
 	for k in ["haven", "outpost", "hive", "ruin"]:
-		draw_rect(Rect2(Vector2(lx, ly - 8), Vector2(9, 9)), KIND_COL[k])
+		ci.draw_rect(Rect2(Vector2(lx, ly - 8), Vector2(9, 9)), KIND_COL[k])
 		_txt(Vector2(lx + 14, ly), {"haven": "Haven", "outpost": "Outpost", "hive": "Machine hive", "ruin": "Ruin"}[k], 11, C_DIM)
 		lx += 100
 	_txt(Vector2(r.end.x - 420, ly + 18), "▪▪▪▪▪ zone threat · dashed = unscouted", 10, C_DIM)
 
 
 func _draw_end(vs: Vector2) -> void:
-	draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.55))
+	ci.draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.55))
 	_txt(Vector2(0, vs.y * 0.42), "SIGNAL LOST", 40, C_WARN, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 	var camp: Campaign = G.campaign
 	var sub := "Vanguard down in %s · %d legs travelled · %d credits banked · %d machines destroyed this leg" % [
@@ -514,7 +587,7 @@ func _draw_crosshair(p: Vector2) -> void:
 	var col := Color(0.6, 1.0, 0.75, 0.9)
 	if G.player and G.player.alive and (G.player.overheated > 0.0 or G.player.busy_menu):
 		col = Color(1, 0.5, 0.3, 0.9)
-	draw_arc(p, 9.0, 0, TAU, 20, col, 1.5)
+	ci.draw_arc(p, 9.0, 0, TAU, 20, col, 1.5)
 	for d in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
-		draw_line(p + d * 5.0, p + d * 14.0, col, 1.5)
-	draw_circle(p, 1.5, col)
+		ci.draw_line(p + d * 5.0, p + d * 14.0, col, 1.5)
+	ci.draw_circle(p, 1.5, col)

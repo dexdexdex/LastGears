@@ -429,9 +429,9 @@ func _draw_body() -> void:
 
 	# aim cone edges, so you can tell whose light is whose
 	if alive:
-		for sgn in [-1.0, 1.0]:
-			var ed := aim_dir.rotated(Lighting.VIS_HALF * sgn)
-			draw_line(ed * (r + 10.0), ed * 170.0, Color(color, 0.2), 1.0, true)
+		var e1 := aim_dir.rotated(Lighting.VIS_HALF)
+		var e2 := aim_dir.rotated(-Lighting.VIS_HALF)
+		draw_multiline(PackedVector2Array([e1 * (r + 10.0), e1 * 170.0, e2 * (r + 10.0), e2 * 170.0]), Color(color, 0.2), 1.0)
 	# dodge afterimages: silhouette ghosts
 	for i in ghosts.size():
 		var k := float(i + 1) / ghosts.size()
@@ -445,6 +445,8 @@ func _draw_body() -> void:
 	# legs: articulated, abstract
 	var nl: int = LEGS.get(loadout.chassis_id, 2)
 	var legc := col.darkened(0.35)
+	var leg_pts := PackedVector2Array()
+	var joints: Array = []
 	for li in nl:
 		var sgn2 := -1.0 if li % 2 == 0 else 1.0
 		var fore := 0.0 if nl == 2 else (0.38 if li < 2 else -0.38)
@@ -452,9 +454,14 @@ func _draw_body() -> void:
 		var hip := Vector2(fore * r, sgn2 * r * 0.55)
 		var foot := Vector2(fore * r + sin(phase) * r * 0.42, sgn2 * r * 1.12)
 		var knee := (hip + foot) * 0.5 + Vector2(r * 0.12, sgn2 * r * 0.28)
-		draw_polyline(PackedVector2Array([hip, knee, foot]), legc, 2.0, true)
-		draw_circle(foot, 1.6, col.darkened(0.3))
-		draw_circle(knee, 1.0, col.darkened(0.2))
+		leg_pts.append_array([hip, knee, knee, foot])
+		joints.append([foot, 1.6])
+		joints.append([knee, 1.0])
+	draw_multiline(leg_pts, legc, 2.0)
+	var dot := EnemyManager.dot_texture()
+	for j in joints:
+		var jr: float = j[1]
+		draw_texture_rect(dot, Rect2(j[0] - Vector2(jr, jr), Vector2(jr, jr) * 2.0), false, col.darkened(0.25))
 
 	# hull: gradient fill (lighter toward the front), inset panel, clean rim
 	var cols := PackedColorArray()
@@ -475,8 +482,10 @@ func _draw_body() -> void:
 	var core_c := col.lightened(0.45).lerp(Color(1.0, 0.55, 0.2), hot)
 	var pulse := 0.5 + 0.5 * sin(t * (3.0 + hot * 6.0))
 	var core_p := -facing * r * 0.35
-	draw_circle(core_p, r * (0.26 + 0.05 * pulse), Color(core_c, 0.16 + 0.12 * hot))
-	draw_circle(core_p, r * 0.12, core_c)
+	var gr := r * (0.26 + 0.05 * pulse)
+	draw_texture_rect(dot, Rect2(core_p - Vector2(gr, gr), Vector2(gr, gr) * 2.0), false, Color(core_c, 0.16 + 0.12 * hot))
+	var cr := r * 0.12
+	draw_texture_rect(dot, Rect2(core_p - Vector2(cr, cr), Vector2(cr, cr) * 2.0), false, core_c)
 
 	# weapons: barrels match the fitted gun, kick back on fire
 	var perp := aim_dir.orthogonal()
@@ -505,9 +514,15 @@ func _draw_body() -> void:
 	# shield: segmented shimmer ring
 	if shield > 1.0:
 		var sa := 0.2 + 0.4 * shield / max_shield
+		var segs := PackedVector2Array()
 		for k3 in 6:
 			var a0 := t * 0.8 + TAU * k3 / 6.0
-			draw_arc(Vector2.ZERO, r + 6.0, a0, a0 + TAU / 6.0 - 0.25, 8, Color(0.45, 0.85, 1.0, sa), 1.5, true)
+			for q in 4:
+				var qa := a0 + (TAU / 6.0 - 0.25) * q / 4.0
+				var qb := a0 + (TAU / 6.0 - 0.25) * (q + 1) / 4.0
+				segs.append(Vector2.from_angle(qa) * (r + 6.0))
+				segs.append(Vector2.from_angle(qb) * (r + 6.0))
+		draw_multiline(segs, Color(0.45, 0.85, 1.0, sa), 1.5)
 	# player marker
 	if is_player:
 		var rr := r + 10.0 + sin(t * 4.0)
@@ -521,8 +536,8 @@ func _draw_body() -> void:
 	# health: slim bar + small label
 	var bw := 24.0
 	var by := -r - 12.0
-	draw_line(Vector2(-bw / 2, by), Vector2(bw / 2, by), Color(0, 0, 0, 0.55), 3.0)
-	draw_line(Vector2(-bw / 2, by), Vector2(-bw / 2 + bw * hp_ratio(), by), Color(0.45, 1.0, 0.6) if hp_ratio() > 0.35 else Color(1, 0.35, 0.3), 2.0)
+	draw_rect(Rect2(-bw / 2, by - 1.5, bw, 3.0), Color(0, 0, 0, 0.55))
+	draw_rect(Rect2(-bw / 2, by - 1.0, bw * hp_ratio(), 2.0), Color(0.45, 1.0, 0.6) if hp_ratio() > 0.35 else Color(1, 0.35, 0.3))
 	var font := ThemeDB.fallback_font
 	draw_string(font, Vector2(-bw / 2, by - 4), callsign, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color(col, 0.7))
 	# field work progress

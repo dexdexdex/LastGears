@@ -602,11 +602,27 @@ func flow_dir(p: Vector2) -> Vector2:
 const COL_WALL := Color(0.42, 0.28, 0.18)
 
 
-# The city is drawn in chunks so the renderer culls everything off screen.
+# The zone is drawn in 600 px chunks. Each chunk near the camera is baked
+# once into its own texture (rendered by a one-shot SubViewport), so the whole
+# visible city costs a handful of draw calls instead of hundreds. Chunks far
+# from the camera are released again.
 const CHUNK := 600.0
+const BAKES_PER_FRAME := 2
+var chunks: Array = []
 
 
 class Chunk extends Node2D:
+	var world: World
+	var rect: Rect2
+	var vp: SubViewport
+	var ready_frame := -1
+
+	func _draw() -> void:
+		if vp and Engine.get_process_frames() >= ready_frame:
+			draw_texture(vp.get_texture(), rect.position)
+
+
+class Baker extends Node2D:
 	var world: World
 	var rect: Rect2
 
@@ -615,9 +631,9 @@ class Chunk extends Node2D:
 
 
 func _build_chunks() -> void:
-	for c in get_children():
-		if c is Chunk:
-			c.queue_free()
+	for c in chunks:
+		c.queue_free()
+	chunks.clear()
 	var sz := size_px()
 	var nx := int(ceil(sz.x / CHUNK))
 	var ny := int(ceil(sz.y / CHUNK))
@@ -627,6 +643,46 @@ func _build_chunks() -> void:
 			ch.world = self
 			ch.rect = Rect2(Vector2(cx, cy) * CHUNK, Vector2(CHUNK, CHUNK)).intersection(Rect2(Vector2.ZERO, sz))
 			add_child(ch)
+			chunks.append(ch)
+
+
+func _bake(ch: Chunk) -> void:
+	var vp := SubViewport.new()
+	vp.size = Vector2i(int(ch.rect.size.x), int(ch.rect.size.y))
+	vp.disable_3d = true
+	vp.transparent_bg = false
+	vp.render_target_clear_mode = SubViewport.CLEAR_MODE_ONCE
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	var bk := Baker.new()
+	bk.world = self
+	bk.rect = ch.rect
+	bk.position = -ch.rect.position
+	vp.add_child(bk)
+	ch.add_child(vp)
+	ch.vp = vp
+	ch.ready_frame = Engine.get_process_frames() + 2
+
+
+func _process(_delta: float) -> void:
+	if G.camera == null or chunks.is_empty():
+		return
+	var view := G.camera.view_rect()
+	var near := view.grow(CHUNK * 0.75)
+	var far := view.grow(CHUNK * 2.5)
+	var budget := BAKES_PER_FRAME
+	var frame := Engine.get_process_frames()
+	for ch in chunks:
+		if ch.vp == null:
+			if budget > 0 and near.intersects(ch.rect):
+				_bake(ch)
+				budget -= 1
+		else:
+			if frame == ch.ready_frame:
+				ch.queue_redraw()
+			elif not far.intersects(ch.rect):
+				ch.vp.queue_free()
+				ch.vp = null
+				ch.queue_redraw()
 
 
 func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
@@ -637,7 +693,7 @@ func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
 			var c := ground.lightened(sp[2]) if sp[2] > 0 else ground.darkened(-sp[2])
 			ci.draw_rect(Rect2(sp[0], Vector2(sp[1], sp[1])), c)
 	for cr in craters:
-		if rect.has_point(cr[0]):
+		if rect.grow(42.0).has_point(cr[0]):
 			ci.draw_circle(cr[0], cr[1], Color(0.11, 0.115, 0.1, 0.8))
 			ci.draw_arc(cr[0], cr[1], 0, TAU, 24, Color(0.22, 0.22, 0.18, 0.5), 2.0)
 	# faint survey grid
@@ -653,7 +709,7 @@ func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
 		gy += step
 	# plazas: rubble-strewn open ground
 	for pl in plazas:
-		if not rect.has_point(pl[0]):
+		if not rect.grow(pl[1]).has_point(pl[0]):
 			continue
 		ci.draw_circle(pl[0], pl[1] * 0.85, Color(0.17, 0.17, 0.14, 0.5))
 		var pr := RandomNumberGenerator.new()
@@ -683,7 +739,7 @@ func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
 		if kind == "_round":
 			continue
 		var rp := Rect2(Vector2(r.position) * CELL, Vector2(r.size) * CELL)
-		if not rect.has_point(rp.position):
+		if not rect.intersects(rp.grow(4.0)):
 			continue
 		var hv := int(r.position.x * 7 + r.position.y * 13)
 		match kind:
@@ -737,9 +793,9 @@ func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
 	# round props
 	for rd in rounds:
 		var c2: Vector2 = rd[0]
-		if not rect.has_point(c2):
-			continue
 		var rr: float = rd[1]
+		if not rect.grow(rr * 1.7).has_point(c2):
+			continue
 		match rd[2]:
 			"tank":
 				ci.draw_circle(c2 + Vector2(3, 4), rr + 2, Color(0, 0, 0, 0.35))
@@ -764,13 +820,13 @@ func draw_chunk(ci: CanvasItem, rect: Rect2) -> void:
 		for x in range(wr.position.x, wr.end.x):
 			for y in range(wr.position.y, wr.end.y):
 				var cp := Vector2(x, y) * CELL
-				if is_solid(x, y) and rect.has_point(cp):
+				if is_solid(x, y) and rect.intersects(Rect2(cp, Vector2(CELL, CELL))):
 					ci.draw_rect(Rect2(cp, Vector2(CELL, CELL)), COL_WALL.darkened(0.35))
 					ci.draw_rect(Rect2(cp, Vector2(CELL, CELL)).grow(-4), COL_WALL)
 	var font := ThemeDB.fallback_font
-	if rect.has_point(start_zone.position):
+	if rect.intersects(start_zone.grow(30.0)):
 		_draw_settlement(ci, start_zone, "%s — DEPARTED" % from_name.to_upper(), Color(0.7, 0.8, 0.6), font)
-	if rect.has_point(goal_zone.position):
+	if rect.intersects(goal_zone.grow(30.0)):
 		_draw_settlement(ci, goal_zone, "%s — DESTINATION" % to_name.to_upper(), Color(1.0, 0.82, 0.45), font)
 
 

@@ -303,6 +303,11 @@ func _draw() -> void:
 
 func _draw_body() -> void:
 	var view := G.camera.view_rect().grow(120.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
+	var tr_pts := PackedVector2Array()
+	var tr_cols := PackedColorArray()
+	var core_pts := PackedVector2Array()
+	var sh_pts := PackedVector2Array()
+	var sh_cols := PackedColorArray()
 	for f in fx:
 		if not view.has_point(f.pos):
 			continue
@@ -329,9 +334,13 @@ func _draw_body() -> void:
 			draw_line(p.pos - dv * 7.0, p.pos, p.color, p.width + 1.0)
 			draw_circle(p.pos - dv * 8.0, 2.5, Color(1, 0.6, 0.2, 0.9))
 		else:
+			# plain tracers: collected and drawn in one batched call below
 			var tail: Vector2 = p.vel.normalized() * minf(p.vel.length() * 0.025, 18.0)
-			draw_line(p.pos - tail, p.pos, p.color, p.width)
-			draw_line(p.pos - tail * 0.4, p.pos, Color(1, 1, 1, 0.7), maxf(1.0, p.width - 1.0))
+			tr_pts.append(p.pos - tail)
+			tr_pts.append(p.pos)
+			tr_cols.append(p.color)
+			core_pts.append(p.pos - tail * 0.4)
+			core_pts.append(p.pos)
 	for f in fx:
 		if not view.has_point(f.pos):
 			continue
@@ -363,4 +372,11 @@ func _draw_body() -> void:
 					var a := float((rs + q * 97) % 628) / 100.0
 					var dq := Vector2.from_angle(a)
 					var p0: Vector2 = f.pos + dq * f.r * (0.2 + k * 1.2)
-					draw_line(p0, p0 + dq * 3.0, Color(f.color, 1.0 - k), 1.5)
+					sh_pts.append(p0)
+					sh_pts.append(p0 + dq * 3.0)
+					sh_cols.append(Color(f.color, 1.0 - k))
+	if not tr_pts.is_empty():
+		draw_multiline_colors(tr_pts, tr_cols, 2.0)
+		draw_multiline(core_pts, Color(1, 1, 1, 0.7), 1.0)
+	if not sh_pts.is_empty():
+		draw_multiline_colors(sh_pts, sh_cols, 1.5)
