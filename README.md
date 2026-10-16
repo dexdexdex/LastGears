@@ -167,9 +167,16 @@ Balancing lives almost entirely in `parts_db.gd`, `enemy_manager.gd` (`TYPES`) a
 
 ## Performance notes
 
-Built for 120 Hz. Everything that moves updates every rendered frame (no 60 Hz
-physics stepping). The swarm re-decides ~20×/s, time-sliced, but all of it
-moves every frame; sleeping machines cost nothing until they wake. The flow
+Built for 120 Hz. The swarm is level-of-detail all the way down: machines
+re-decide on a distance schedule (up close ~10×/s, far away ~1×/s) and keep
+walking on their last decision in between; off-screen machines only step when
+their time slice comes round (10 Hz); on-screen ones step smoothly (every other
+frame above 90 fps, which is sub-pixel); the spatial grid updates incrementally
+at 30 Hz; the flow field's downhill direction is cached per cell; radar, vision
+and the director query the grid instead of scanning the whole swarm; and
+sleeping machines live outside the simulation entirely until woken.
+`-- --stress=3000` spawns 3000 awake machines around an invulnerable squad for
+benchmarking. The flow
 field that steers the swarm is rebuilt a slice per frame so it never hitches.
 The city is drawn in 600 px chunks so off-screen chunks are culled, and
 enemies, shots and pickups only draw on screen. Darkness doesn't use Light2D:

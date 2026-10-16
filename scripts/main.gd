@@ -97,6 +97,9 @@ func _ready() -> void:
 	add_child(director)
 	G.director = director
 	director.populate_zone()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--stress="):   # perf test: N awake machines around the squad, squad can't die
+			_stress(int(a.substr(9)))
 
 	# Satellite-feed filter over the world, HUD crisp on top.
 	var fl := CanvasLayer.new()
@@ -205,6 +208,17 @@ func _process(delta: float) -> void:
 			for k in G.prof_avg:
 				parts.append("%s %.2f" % [k, G.prof_avg[k]])
 			print("[prof] frame %.2f ms draws %d | %s" % [G.fps_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), ", ".join(parts)])
+
+
+func _stress(n: int) -> void:
+	G.god = true
+	var c: Vector2 = G.player.position
+	for i in n:
+		var p := c + Vector2.from_angle(randf() * TAU) * randf_range(260.0, 1600.0)
+		p = G.world.nearest_free(p)
+		var r := randf()
+		G.enemies.spawn("crawler" if r < 0.9 else ("skitter" if r < 0.98 else "spitter"), p)
+	print("[stress] %d awake machines" % n)
 
 
 func _gallery() -> void:

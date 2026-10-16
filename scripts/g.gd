@@ -40,6 +40,7 @@ var show_profiler := false
 # Render at the 1600x900 base resolution and scale up (fast), or at the
 # display's native resolution (sharp; Retina = ~4x the pixels to light).
 var render_fast := true
+var god := false           # --stress: squad takes no damage
 var mech_style := 4          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
 const SETTINGS := "user://settings.cfg"
 

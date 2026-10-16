@@ -250,7 +250,7 @@ func try_dodge(dir: Vector2 = Vector2.ZERO) -> bool:
 
 
 func is_invulnerable() -> bool:
-	return dodge_t > DODGE_TIME - DODGE_IFRAMES
+	return G.god or dodge_t > DODGE_TIME - DODGE_IFRAMES
 
 
 func can_fire(key: String) -> bool:

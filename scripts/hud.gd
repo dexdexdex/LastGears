@@ -79,6 +79,7 @@ func _radar_update(delta: float) -> void:
 
 
 var sleep_prev := 0.0
+var awake_prev := 0.0
 
 
 func _radar_scan(lst: Array, c: Vector2, rng: float, prev: float, cur: float) -> void:
@@ -100,14 +101,18 @@ func _radar_update_body(delta: float) -> void:
 	sweep = fposmod(sweep + TAU / RADAR_PERIOD * delta, TAU)
 	var rng: float = RADAR_RANGES[G.radar_zoom]
 	var c := G.player.position
-	_radar_scan(G.enemies.list, c, rng, prev, sweep)
-	# sleepers never move: scan them every few frames over the wider wedge
-	if Engine.get_process_frames() % 6 == 0:
+	# the sweep moves ~0.2 deg a frame: scan every few frames over the wider wedge
+	var fr := Engine.get_process_frames()
+	if fr % 3 == 0:
+		_radar_scan(G.enemies.list, c, rng, awake_prev, sweep)
+		awake_prev = sweep
+	if fr % 6 == 0:
 		_radar_scan(G.enemies.sleepers, c, rng, sleep_prev, sweep)
 		sleep_prev = sweep
-	for e in blips.keys():
-		if not e.alive or G.game_time - blips[e][1] > RADAR_PERIOD * 1.05:
-			blips.erase(e)
+	if fr % 15 == 7:
+		for e in blips.keys():
+			if not e.alive or G.game_time - blips[e][1] > RADAR_PERIOD * 1.05:
+				blips.erase(e)
 
 
 func _draw_radar(vs: Vector2) -> void:

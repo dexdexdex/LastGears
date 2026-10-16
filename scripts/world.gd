@@ -42,6 +42,8 @@ var astar := AStarGrid2D.new()
 
 # flow field toward the nearest squad mech
 var flow := PackedInt32Array()
+var flow_cache := PackedByteArray()   # per cell: 0 unknown, 1-8 best neighbour, 9 none
+const FLOW_N := [Vector2i(-1, -1), Vector2i(-1, 0), Vector2i(-1, 1), Vector2i(0, -1), Vector2i(0, 1), Vector2i(1, -1), Vector2i(1, 0), Vector2i(1, 1)]
 var flow_timer := 0.0
 const FLOW_MAX := 80
 const FLOW_INF := 1 << 28
@@ -565,6 +567,8 @@ func step_flow(budget: int) -> void:
 	if fhead >= ftail:
 		var tmp := flow
 		flow = flow_build
+		flow_cache.resize(W * H)
+		flow_cache.fill(0)
 		flow_build = tmp
 		flow_building = false
 
@@ -576,25 +580,30 @@ func update_flow(sources: Array) -> void:
 
 
 func flow_dir(p: Vector2) -> Vector2:
-	var c := to_cell(p)
-	if c.x <= 0 or c.y <= 0 or c.x >= W - 1 or c.y >= H - 1 or flow.size() != W * H:
+	## Downhill step on the flow field. The best neighbour of each cell is
+	## worked out once per field and cached (thousands of machines ask).
+	var cx := int(p.x / CELL)
+	var cy := int(p.y / CELL)
+	if cx <= 0 or cy <= 0 or cx >= W - 1 or cy >= H - 1 or flow.size() != W * H:
 		return Vector2.ZERO
-	var i := c.y * W + c.x
-	var best := flow[i]
-	var dir := Vector2.ZERO
-	for dx in [-1, 0, 1]:
-		for dy in [-1, 0, 1]:
-			if dx == 0 and dy == 0:
+	var i := cy * W + cx
+	var k := flow_cache[i]
+	if k == 0:
+		k = 9
+		var best := flow[i]
+		for j in 8:
+			var o: Vector2i = FLOW_N[j]
+			if o.x != 0 and o.y != 0 and (blocked[cy * W + cx + o.x] == 1 or blocked[(cy + o.y) * W + cx] == 1):
 				continue
-			var nx: int = c.x + dx
-			var ny: int = c.y + dy
-			if dx != 0 and dy != 0 and (is_solid(c.x + dx, c.y) or is_solid(c.x, c.y + dy)):
-				continue
-			var v := flow[ny * W + nx]
+			var v := flow[(cy + o.y) * W + cx + o.x]
 			if v < best:
 				best = v
-				dir = (cell_center(Vector2i(nx, ny)) - p)
-	return dir.normalized()
+				k = j + 1
+		flow_cache[i] = k
+	if k == 9:
+		return Vector2.ZERO
+	var n: Vector2i = FLOW_N[k - 1]
+	return (Vector2((cx + n.x + 0.5) * CELL, (cy + n.y + 0.5) * CELL) - p).normalized()
 
 
 # ---------------------------------------------------------------- drawing

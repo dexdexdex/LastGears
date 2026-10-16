@@ -56,21 +56,25 @@ class Enemy:
 	var acc := 0.0             # ...and get the skipped time when they do think
 	var seen := false          # inside some squad mech's vision cone right now
 	var seen_t := -99.0
+	var bi := -1               # bucket this machine is filed in (-1 = none)
 
 const WAKE_R := 300.0
+const SEP_OX := [0, -1, 1, 0, 0, -1, 1, -1, 1]   # own bucket first
+const SEP_OY := [0, 0, 0, -1, 1, -1, -1, 1, 1]
 
 var list: Array = []       # awake machines: simulated every frame
 var sleepers: Array = []   # dormant field machines: never move, cost nothing until woken
 var sgrid := {}            # Vector2i bucket -> Array of sleepers (built once, sparse)
 var sleepers_dirty := false
+var bucket_t := 0.0
+var on_list: Array = []    # awake machines on screen this frame (filled by the move pass)
 var _seen_sl: Array = []
 var wake_t := 0.0
 const BUCKET := 48.0
-const THINK_HZ := 20.0     # each machine re-decides ~20x/s; all of them move every frame
+const THINK_HZ := 10.0     # slice rate; distance LOD below thins it to ~1x/s far away
 var bw := 0
 var bh := 0
 var grid: Array = []       # flat bucket grid of Arrays
-var touched := PackedInt32Array()
 var think_slice := 0
 var deaths := 0
 var flow_timer := 0.0
@@ -116,8 +120,10 @@ func _process_body(delta: float) -> void:
 	G.world.step_flow(2500)
 	G.pe(" · flow field", tf)
 	var tb := Time.get_ticks_usec()
-	if Engine.get_process_frames() % 2 == 0 or bw == 0:
-		_rebuild_buckets()       # machines move ~1-2 px/frame; 48 px buckets stay valid
+	bucket_t -= delta
+	if bucket_t <= 0.0 or bw == 0:
+		bucket_t = 1.0 / 30.0
+		_rebuild_buckets()       # machines move < 6 px per 1/30 s; 48 px buckets stay valid
 	G.pe(" · buckets", tb)
 	var alive_mechs := G.alive_squad()
 	if alive_mechs.is_empty():
@@ -142,32 +148,74 @@ func _process_body(delta: float) -> void:
 	var think_dt := delta * k
 	var n := list.size()
 	var tt := Time.get_ticks_usec()
-	var onscreen := G.camera.view_rect().grow(160.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
-	var parity := Engine.get_process_frames() % 2
-	for i in n:
+	var onscreen := G.camera.view_rect().grow(120.0) if G.camera else Rect2(-1e9, -1e9, 2e9, 2e9)
+	# Pass 1, the slice: 1/k of the swarm re-decides, and the off-screen ones
+	# among it also take their (k-frame) step now. Off screen nobody sees
+	# 20 Hz motion, and each machine costs one visit per slice, not per frame.
+	for i in range(think_slice, n, k):
 		var e: Enemy = list[i]
 		if not e.alive:
 			continue
-		if i % k == think_slice:
-			e.acc += think_dt
-			if e.skip > 0:
-				e.skip -= 1
-			else:
-				var dt := e.acc
-				e.acc = 0.0
-				_think(e, dt, alive_mechs)
-				if not e.alive:
-					continue
-		if not e.awake and e.want == Vector2.ZERO and e.vel == Vector2.ZERO and e.flash <= 0.0:
-			continue
-		# off screen nobody sees the motion: step every other frame with double dt
-		if (i & 1) != parity and not onscreen.has_point(e.pos):
-			e.mdt += delta
-			continue
-		_move(e, delta + e.mdt)
-		e.mdt = 0.0
+		e.acc += think_dt
+		if e.skip > 0:
+			e.skip -= 1
+		else:
+			var dt := e.acc
+			e.acc = 0.0
+			_think(e, dt, alive_mechs)
+			if not e.alive:
+				continue
+		if not onscreen.has_point(e.pos):
+			_move(e, think_dt)
+	G.pe(" · pass1", tt)
+	var t2 := Time.get_ticks_usec()
+	# Pass 2: what's on screen moves every frame (found through the buckets).
+	# Above ~90 fps each visible machine steps every other frame with 2x dt:
+	# sub-pixel per step at these speeds, half the work at 120 Hz.
+	var halve := delta < 1.0 / 90.0
+	var par := Engine.get_process_frames() & 1
+	var sdt := delta * 2.0 if halve else delta
+	var lerp_k := clampf(5.0 * sdt, 0.0, 1.0)
+	var world: World = G.world
+	var near: PackedByteArray = world.near
+	var ww: int = world.W
+	var hh: int = world.H
+	var inv_cell := 1.0 / World.CELL
+	on_list.clear()
+	if bw > 0:
+		var x0 := maxi(0, int(onscreen.position.x / BUCKET))
+		var x1 := mini(bw - 1, int(onscreen.end.x / BUCKET))
+		var y0 := maxi(0, int(onscreen.position.y / BUCKET))
+		var y1 := mini(bh - 1, int(onscreen.end.y / BUCKET))
+		for y in range(y0, y1 + 1):
+			var row := y * bw
+			for x in range(x0, x1 + 1):
+				for e in grid[row + x]:
+					if not e.alive or not onscreen.has_point(e.pos):
+						continue
+					on_list.append(e)
+					if halve and ((e.bi & 1) ^ par) == 1:
+						continue
+					# inlined _move (this runs for every visible machine every frame)
+					if e.flash > 0.0:
+						e.flash = maxf(0.0, e.flash - sdt * 6.0)
+					var v: Vector2 = e.vel.lerp(e.want, lerp_k)
+					e.vel = v
+					var step: Vector2 = v * sdt
+					if step.length_squared() < 0.0004:
+						if e.want == Vector2.ZERO:
+							e.vel = Vector2.ZERO
+						continue
+					var cx := int(e.pos.x * inv_cell)
+					var cy := int(e.pos.y * inv_cell)
+					if cx < 1 or cy < 1 or cx >= ww - 1 or cy >= hh - 1 or near[cy * ww + cx] == 1:
+						e.pos = world.move_circle(e.pos, step, e.r)
+					else:
+						e.pos += step
+	G.pe(" · pass2", t2)
 	G.pe(" · think+move", tt)
-	if deaths > 0:
+	# compact the dead out now and then (every loop skips them meanwhile)
+	if deaths > 0 and (deaths > 60 or Engine.get_process_frames() % 30 == 0):
 		deaths = 0
 		list = list.filter(func(x): return x.alive)
 	queue_redraw()
@@ -215,8 +263,14 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	e.target = best
 	var to_t := best.position - e.pos
 	var dist := sqrt(bd)
+	# Distance LOD: only machines about to touch a mech need quick reflexes.
+	# The rest keep walking on their last decision (and still move smoothly).
 	if dist > 1100.0:
-		e.skip = 3          # far from everyone: re-decide ~5x/s
+		e.skip = 9          # far: re-decide ~1x/s
+	elif dist > 500.0:
+		e.skip = 3          # mid: ~2.5x/s
+	elif dist > 200.0:
+		e.skip = 1          # near: ~5x/s
 	e.los_t -= delta
 	if e.los_t <= 0.0:
 		e.los_t = 0.35
@@ -260,26 +314,24 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 	var checked := 0
 	var bx := int(e.pos.x / BUCKET)
 	var by := int(e.pos.y / BUCKET)
-	for ox in [-1, 0, 1]:
-		for oy in [-1, 0, 1]:
-			var gx: int = bx + ox
-			var gy: int = by + oy
-			if gx < 0 or gy < 0 or gx >= bw or gy >= bh:
+	for q in 9:
+		var gx: int = bx + SEP_OX[q]
+		var gy: int = by + SEP_OY[q]
+		if gx < 0 or gy < 0 or gx >= bw or gy >= bh:
+			continue
+		for o in grid[gy * bw + gx]:
+			if o == e:
 				continue
-			for o in grid[gy * bw + gx]:
-				if o == e:
-					continue
-				var dv: Vector2 = e.pos - o.pos
-				var md: float = e.r + o.r + 3.0
-				var l2 := dv.length_squared()
-				if l2 < md * md and l2 > 0.0001:
-					sep += dv / sqrt(l2) * (md - sqrt(l2)) / md
-				checked += 1
-				if checked > 10:
-					break
-			if checked > 10:
+			var dv: Vector2 = e.pos - o.pos
+			var md: float = e.r + o.r + 3.0
+			var l2 := dv.length_squared()
+			if l2 < md * md and l2 > 0.0001:
+				var l := sqrt(l2)
+				sep += dv / l * (md - l) / md
+			checked += 1
+			if checked > 8:
 				break
-		if checked > 10:
+		if checked > 8:
 			break
 	if e.d.has("melee") and desired == Vector2.ZERO:
 		e.want = sep * 90.0
@@ -288,25 +340,32 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 
 
 func _rebuild_buckets() -> void:
+	## Incremental: only machines that crossed a bucket edge get re-filed.
 	if bw == 0:
 		bw = int(G.world.W * World.CELL / BUCKET) + 1
 		bh = int(G.world.H * World.CELL / BUCKET) + 1
 		grid.resize(bw * bh)
 		for i in grid.size():
 			grid[i] = []
-	for idx in touched:
-		grid[idx].clear()
-	touched.resize(0)
+	var inv := 1.0 / BUCKET
 	for e in list:
 		if not e.alive:
 			continue
-		var gx := clampi(int(e.pos.x / BUCKET), 0, bw - 1)
-		var gy := clampi(int(e.pos.y / BUCKET), 0, bh - 1)
+		var gx := clampi(int(e.pos.x * inv), 0, bw - 1)
+		var gy := clampi(int(e.pos.y * inv), 0, bh - 1)
 		var idx := gy * bw + gx
-		var cell: Array = grid[idx]
-		if cell.is_empty():
-			touched.append(idx)
-		cell.append(e)
+		if idx == e.bi:
+			continue
+		if e.bi >= 0:
+			grid[e.bi].erase(e)
+		grid[idx].append(e)
+		e.bi = idx
+
+
+func _unfile(e: Enemy) -> void:
+	if e.bi >= 0:
+		grid[e.bi].erase(e)
+		e.bi = -1
 
 
 func query_radius(p: Vector2, r: float) -> Array:
@@ -344,9 +403,14 @@ func count_near(p: Vector2, r: float) -> int:
 	## Awake hostiles only: dormant fields don't count as pressure.
 	var n := 0
 	var r2 := r * r
-	for e in list:
-		if e.alive and e.awake and e.pos.distance_squared_to(p) < r2:
-			n += 1
+	if bw == 0:
+		return 0
+	for y in range(maxi(0, int((p.y - r) / BUCKET)), mini(bh - 1, int((p.y + r) / BUCKET)) + 1):
+		var row := y * bw
+		for x in range(maxi(0, int((p.x - r) / BUCKET)), mini(bw - 1, int((p.x + r) / BUCKET)) + 1):
+			for e in grid[row + x]:
+				if e.alive and e.pos.distance_squared_to(p) < r2:
+					n += 1
 	return n
 
 
@@ -359,22 +423,11 @@ func _update_visibility(mechs: Array) -> void:
 func _update_visibility_body(mechs: Array) -> void:
 	## An enemy is "seen" if it's inside any squad mech's light cone with a
 	## clear line of sight (or inside a hull halo). Shared across the squad.
-	for e in list:
-		var seen := false
-		for m in mechs:
-			if Lighting.in_cone(m, e.pos):
-				if e.pos.distance_squared_to(m.position) < Lighting.HALO * Lighting.HALO or G.world.has_los(m.position, e.pos):
-					seen = true
-					break
-		e.seen = seen
-		if seen:
-			e.seen_t = G.game_time
-	# sleepers: only the ones near a mech can possibly be in a cone
 	for e in _seen_sl:
 		e.seen = false
 	_seen_sl.clear()
 	for m in mechs:
-		for e in query_sleepers(m.position, Lighting.VIS_RANGE):
+		for e in query_radius(m.position, Lighting.VIS_RANGE):
 			if e.seen:
 				continue
 			if Lighting.in_cone(m, e.pos) and (e.pos.distance_squared_to(m.position) < Lighting.HALO * Lighting.HALO or G.world.has_los(m.position, e.pos)):
@@ -482,6 +535,7 @@ func kill(e: Enemy, by: Mech) -> void:
 	if not e.awake:
 		_wake(e)
 	e.alive = false
+	_unfile(e)
 	deaths += 1
 	G.kills += 1
 	G.leg_kills[e.type] = int(G.leg_kills.get(e.type, 0)) + 1
@@ -546,8 +600,8 @@ func _draw_body() -> void:
 	var dot := dot_texture()
 	var specials: Array = []
 	# pass 1: every body as a textured dot (one batch)
-	for e in list:
-		if not view.has_point(e.pos):
+	for e in on_list:
+		if not e.alive or not view.has_point(e.pos):
 			continue
 		var c: Color = e.d.color
 		if e.flash > 0.0:
