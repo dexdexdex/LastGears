@@ -14,6 +14,7 @@ var bot_report_t := 0.0
 
 
 func _ready() -> void:
+	get_tree().paused = false
 	G.reset()
 	randomize()
 	var seed_value := randi()
@@ -87,6 +88,7 @@ func _ready() -> void:
 	add_child(hl)
 	var hud := Hud.new()
 	hl.add_child(hud)
+	hud.process_mode = Node.PROCESS_MODE_ALWAYS   # keeps drawing the pause screen
 	G.hud = hud
 	var menu := FieldMenu.new()
 	hl.add_child(menu)
@@ -99,11 +101,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if Input.is_action_just_pressed("restart"):
-		get_tree().reload_current_scene()
-		return
 	if G.game_state != "play":
-		if Input.is_action_just_pressed("open_menu") or Input.is_action_just_pressed("menu_accept"):
+		if Input.is_action_just_pressed("open_menu") or Input.is_action_just_pressed("pause"):
 			get_tree().reload_current_scene()
 		return
 	if Input.is_action_just_pressed("toggle_director"):
@@ -114,7 +113,11 @@ func _process(delta: float) -> void:
 		G.menu.toggle()
 	elif G.menu.open:
 		G.menu.handle_input()
-	G.tactical = Input.is_action_pressed("tactical") and not G.menu.open
+	if Input.is_action_just_pressed("tactical_toggle"):
+		G.tactical_latched = not G.tactical_latched
+	if G.menu.open:
+		G.tactical_latched = false
+	G.tactical = (Input.is_action_pressed("tactical") or G.tactical_latched) and not G.menu.open
 	if G.bot_mode:
 		_bot_screenshots()
 

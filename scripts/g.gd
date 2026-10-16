@@ -20,6 +20,7 @@ var game_time := 0.0
 var kills := 0
 var using_mouse := false
 var tactical := false
+var tactical_latched := false   # Q toggle
 var game_state := "play"       # play | won | lost
 var bot_mode := false          # --bot : AI drives the player (for automated tests)
 var show_director := true
@@ -33,7 +34,11 @@ const MATERIAL_COLORS := {
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_setup_input()
+	using_mouse = Input.get_connected_joypads().is_empty()
+	if DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN
 	bot_mode = "--bot" in OS.get_cmdline_user_args()
 
 
@@ -44,10 +49,22 @@ func reset() -> void:
 	game_time = 0.0
 	kills = 0
 	tactical = false
+	tactical_latched = false
 	game_state = "play"
 
 
 func _process(delta: float) -> void:
+	if Input.is_action_just_pressed("toggle_fullscreen"):
+		var fs := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fs else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	if Input.is_action_just_pressed("pause") and game_state == "play" and not (menu and menu.open):
+		get_tree().paused = not get_tree().paused
+	if Input.is_action_just_pressed("restart"):
+		get_tree().paused = false
+		get_tree().reload_current_scene()
+		return
+	if get_tree().paused:
+		return
 	if game_state == "play":
 		game_time += delta
 
@@ -134,7 +151,10 @@ func _setup_input() -> void:
 	_button("fire_secondary", [JOY_BUTTON_LEFT_SHOULDER])    # L1
 	_mouse("fire_secondary", MOUSE_BUTTON_RIGHT)
 	_axis("tactical", JOY_AXIS_TRIGGER_RIGHT, 1.0)           # R2
-	_key("tactical", [KEY_TAB, KEY_SPACE])
+	_key("tactical_toggle", [KEY_Q])                         # Q toggles
+	_key("pause", [KEY_ENTER, KEY_KP_ENTER])
+	_button("pause", [JOY_BUTTON_BACK])
+	_key("toggle_fullscreen", [KEY_F11])
 	_button("open_menu", [JOY_BUTTON_START])
 	_key("open_menu", [KEY_ESCAPE, KEY_I])
 
@@ -144,9 +164,11 @@ func _setup_input() -> void:
 	_button("menu_down", [JOY_BUTTON_DPAD_DOWN])
 	_axis("menu_up", JOY_AXIS_LEFT_Y, -1.0)
 	_axis("menu_down", JOY_AXIS_LEFT_Y, 1.0)
-	_key("menu_accept", [KEY_ENTER, KEY_E])
+	_key("menu_accept", [KEY_E, KEY_SPACE])
+	_mouse("menu_accept", MOUSE_BUTTON_LEFT)
 	_button("menu_accept", [JOY_BUTTON_A])
-	_key("menu_back", [KEY_BACKSPACE, KEY_Q])
+	_key("menu_back", [KEY_BACKSPACE])
+	_mouse("menu_back", MOUSE_BUTTON_RIGHT)
 	_button("menu_back", [JOY_BUTTON_B])
 
 	_key("restart", [KEY_F5])

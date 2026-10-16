@@ -59,7 +59,7 @@ func _draw() -> void:
 	if G.tactical or (G.camera and G.camera.tac_blend > 0.05):
 		_draw_map(vs)
 	_draw_objective(vs)
-	_txt(Vector2(16, vs.y - 10), "L-stick move · R-stick aim · R1 fire · L1 alt fire · hold R2 tactical · START field refit     (KB: WASD · mouse · LMB/RMB · Tab · Esc/I · F3 director · F2 filter · F5 restart)", 11, C_DIM)
+	_txt(Vector2(16, vs.y - 10), "WASD move · mouse aim · LMB weapon 1 · RMB weapon 2 · Q tactical · Esc refit · Enter pause · F11 fullscreen · F5 restart      (pad: sticks · R1/L1 · hold R2 · START)", 11, C_DIM)
 	if banner_t > 0.0:
 		var a := clampf(banner_t, 0, 1)
 		var y := vs.y * 0.3
@@ -67,6 +67,12 @@ func _draw() -> void:
 		_txt(Vector2(0, y), banner_text, 26, Color(banner_color, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 	if G.game_state != "play":
 		_draw_end(vs)
+	elif get_tree().paused:
+		draw_rect(Rect2(Vector2.ZERO, vs), Color(0, 0, 0, 0.5))
+		_txt(Vector2(0, vs.y * 0.45), "PAUSED", 40, C_AMBER, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+		_txt(Vector2(0, vs.y * 0.45 + 34), "Enter to resume · F5 restart", 14, C_DIM, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+	if G.using_mouse and not get_tree().paused:
+		_draw_crosshair(get_local_mouse_position())
 
 
 func _draw_materials(vs: Vector2) -> void:
@@ -244,4 +250,14 @@ func _draw_end(vs: Vector2) -> void:
 	var alive := G.alive_squad().size()
 	var sub := "%d of %d mechs made it  ·  %d machines destroyed  ·  %d:%02d" % [alive, G.squad.size(), G.kills, int(G.game_time) / 60, int(G.game_time) % 60]
 	_txt(Vector2(0, vs.y * 0.42 + 40), sub, 16, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	_txt(Vector2(0, vs.y * 0.42 + 72), "Press START / F5 to trudge again", 14, C_DIM, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+	_txt(Vector2(0, vs.y * 0.42 + 72), "Press Enter / F5 to trudge again", 14, C_DIM, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+
+
+func _draw_crosshair(p: Vector2) -> void:
+	var col := Color(0.6, 1.0, 0.75, 0.9)
+	if G.player and G.player.alive and (G.player.overheated > 0.0 or G.player.busy_menu):
+		col = Color(1, 0.5, 0.3, 0.9)
+	draw_arc(p, 9.0, 0, TAU, 20, col, 1.5)
+	for d in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
+		draw_line(p + d * 5.0, p + d * 14.0, col, 1.5)
+	draw_circle(p, 1.5, col)

@@ -20,18 +20,21 @@ or open `project.godot` in the editor and press F5.
 
 ## Controls
 
-| Action | Gamepad | Keyboard / mouse |
+Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also works.
+
+| Action | Keyboard / mouse | Gamepad |
 |---|---|---|
-| Move (deliberately not fast) | Left stick | WASD |
-| Aim | Right stick (tilt distance = mortar range) | Mouse |
-| Fire primary hardpoint | R1 | Left click |
-| Fire secondary hardpoint | L1 | Right click |
-| Tactical view + corridor map (hold) | R2 | Tab / Space |
-| Field refit menu (real time!) | Start | Esc / I |
-| Menu navigate / confirm / back | D-pad or stick / A / B | ↑↓ / Enter / Backspace |
-| Toggle director readout | | F3 |
-| Toggle satellite filter | | F2 |
-| Restart | | F5 |
+| Move (deliberately not fast) | WASD | Left stick |
+| Aim | Mouse (crosshair; distance = mortar range) | Right stick |
+| Weapon 1 (primary hardpoint) | Left click | R1 |
+| Weapon 2 (secondary hardpoint) | Right click | L1 |
+| Tactical view + corridor map | Q (toggle) | Hold R2 |
+| Pause | Enter | Select/Share |
+| Field refit menu (real time!) | Esc | Start |
+| Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
+| Toggle director readout | F3 | |
+| Toggle satellite filter | F2 | |
+| Restart | F5 | |
 
 ## The vertical slice
 

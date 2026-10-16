@@ -160,7 +160,7 @@ func _draw() -> void:
 	draw_rect(r, Color(0.45, 0.6, 0.45, 0.6), false, 1.0)
 	_txt(r.position + Vector2(16, 24), "FIELD REFIT — %s" % m.callsign, 16, C_SEL)
 	_txt(r.position + Vector2(0, 24), "LIVE — you can't move or fire", 11, C_BAD, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 16)
-	_txt(r.position + Vector2(16, 42), "D-pad/stick select · A confirm · B back", 10, C_DIM)
+	_txt(r.position + Vector2(16, 42), "W/S select · E/Space/LMB confirm · Backspace/RMB back · Esc close   (pad: D-pad · A · B)", 10, C_DIM)
 
 	var lx := r.position.x + 16
 	var y := r.position.y + 70
