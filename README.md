@@ -46,6 +46,7 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Refit: select / confirm / back | W,S / E, Space, left click / Backspace, right click | D-pad / A / B |
 | FPS meter: per-system profiler breakdown | F1 | |
 | Render resolution: fast (1600×900 scaled up) / sharp (native, e.g. Retina) | F9 | |
+| Mech look: HULL / GLYPH / MONOLITH / ORB (remembered) | F6 | |
 | Toggle director readout | F3 | |
 | Toggle satellite grain/tint (darkness stays) | F2 | |
 | Restart | F5 | |
@@ -203,4 +204,5 @@ godot --headless --path . --fixed-fps 60 --quit-after 25200 -- --bot --seed=7
 It prints director phase changes and a status line every 10 s (enemy count,
 intensity, materials, each mech's state and hull), and exercises the refit menu.
 Add `--shots=/some/dir` (with a real or virtual display, not `--headless`) to save
-screenshots.
+screenshots. `-- --gallery --shots=/some/dir` renders every mech style side by
+side to `gallery.png`; `--mech-style=N` (0-3) forces a style.

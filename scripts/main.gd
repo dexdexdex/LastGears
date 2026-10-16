@@ -8,6 +8,9 @@ var bot_report_t := 0.0
 func _ready() -> void:
 	get_tree().paused = false
 	G.reset()
+	if "--gallery" in OS.get_cmdline_user_args():
+		_gallery()
+		return
 	if G.campaign == null:
 		randomize()
 		var cseed := randi()
@@ -142,6 +145,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if G.game_state == "gallery":
+		return
 	if G.game_state == "station":
 		return
 	if G.game_state == "lost":
@@ -200,6 +205,53 @@ func _process(delta: float) -> void:
 			for k in G.prof_avg:
 				parts.append("%s %.2f" % [k, G.prof_avg[k]])
 			print("[prof] frame %.2f ms draws %d | %s" % [G.fps_ms, int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)), ", ".join(parts)])
+
+
+func _gallery() -> void:
+	## --gallery: every frame in every mech style on one sheet (for picking a look).
+	G.game_state = "gallery"
+	var bg := ColorRect.new()
+	bg.color = Color(0.07, 0.085, 0.075)
+	bg.size = Vector2(3000, 2000)
+	bg.position = Vector2(-1500, -1000)
+	add_child(bg)
+	var font := ThemeDB.fallback_font
+	var frames := [["vanguard", "autocannon", "rockets", ["heat_sink"], "VANGUARD", Color(0.45, 0.85, 1.0)],
+		["bulwark", "flak", "rockets", ["armor_plate"], "ROOK", Color(1.0, 0.55, 0.35)],
+		["kestrel", "railgun", "mortar", ["targeting"], "WREN", Color(0.75, 0.95, 0.45)],
+		["sparrow", "gatling", "", ["shield"], "MAGS", Color(0.9, 0.7, 1.0)]]
+	var sx := 120.0
+	var sy := 92.0
+	var origin := Vector2(-sx * 1.5, -sy * 1.5)
+	var labels := Node2D.new()
+	add_child(labels)
+	labels.draw.connect(func():
+		for si in Mech.STYLE_NAMES.size():
+			labels.draw_string(font, origin + Vector2(-sx * 0.95, si * sy + 4), "%d  %s" % [si + 1, Mech.STYLE_NAMES[si]], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.9, 0.8))
+		for ci in frames.size():
+			labels.draw_string(font, origin + Vector2(ci * sx - 24, -sy * 0.55), frames[ci][4], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, frames[ci][5]))
+	for si in Mech.STYLE_NAMES.size():
+		for ci in frames.size():
+			var f: Array = frames[ci]
+			var m := Mech.new()
+			m.setup(f[4], "", f[5], Loadout.new(f[0], f[1], f[2], f[3]), false)
+			m.style_override = si
+			m.position = origin + Vector2(ci * sx, si * sy)
+			m.facing = Vector2.from_angle(-0.35 + ci * 0.25)
+			m.aim_dir = Vector2.from_angle(-0.6 + ci * 0.35)
+			m.walk_phase = ci * 1.3
+			add_child(m)
+	var cam := Camera2D.new()
+	cam.zoom = Vector2.ONE * 2.1
+	cam.position = origin + Vector2(sx * 1.2, sy * 1.5)
+	add_child(cam)
+	cam.make_current()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shots="):
+			await get_tree().create_timer(0.8).timeout
+			get_viewport().get_texture().get_image().save_png(a.substr(8) + "/gallery.png")
+			print("[bot] screenshot gallery")
+			get_tree().quit()
 
 
 func _formation_input() -> void:

@@ -40,6 +40,24 @@ var show_profiler := false
 # Render at the 1600x900 base resolution and scale up (fast), or at the
 # display's native resolution (sharp; Retina = ~4x the pixels to light).
 var render_fast := true
+var mech_style := 0          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
+const SETTINGS := "user://settings.cfg"
+
+
+func load_settings() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS) == OK:
+		mech_style = int(cf.get_value("look", "mech_style", 0))
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--mech-style="):
+			mech_style = int(a.substr(13))
+
+
+func save_settings() -> void:
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	cf.set_value("look", "mech_style", mech_style)
+	cf.save(SETTINGS)
 
 
 func apply_render_mode() -> void:
@@ -124,6 +142,7 @@ func _ready() -> void:
 	_setup_input()
 	using_mouse = Input.get_connected_joypads().is_empty()
 	apply_render_mode.call_deferred()
+	load_settings()
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN
 	bot_mode = "--bot" in OS.get_cmdline_user_args()
@@ -160,6 +179,10 @@ func _process(delta: float) -> void:
 		_perf_tick()
 	if Input.is_action_just_pressed("toggle_profiler"):
 		show_profiler = not show_profiler
+	if Input.is_action_just_pressed("cycle_mech_style"):
+		mech_style = (mech_style + 1) % Mech.STYLE_NAMES.size()
+		save_settings()
+		announce("MECH STYLE: " + Mech.STYLE_NAMES[mech_style], Color(0.6, 0.9, 1.0))
 	if Input.is_action_just_pressed("toggle_render"):
 		render_fast = not render_fast
 		apply_render_mode()
@@ -300,6 +323,7 @@ func _setup_input() -> void:
 	_key("toggle_director", [KEY_F3])
 	_key("toggle_profiler", [KEY_F1])
 	_key("toggle_render", [KEY_F9])
+	_key("cycle_mech_style", [KEY_F6])
 	_key("toggle_filter", [KEY_F2])
 
 
