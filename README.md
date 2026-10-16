@@ -48,6 +48,7 @@ Starts fullscreen (F11 toggles). Keyboard + mouse is the default; a gamepad also
 | Render resolution: fast (1600×900 scaled up) / sharp (native, e.g. Retina) | F9 | |
 | Mech look: ORB TACTICAL (default: still orb + a tiny garbled terminal feed per unit) / HULL / GLYPH / MONOLITH / ORB (remembered) | F6 | |
 | Toggle director readout | F3 | |
+| Outline swarm packs (debug) | F4 | |
 | Toggle satellite grain/tint (darkness stays) | F2 | |
 | Restart | F5 | |
 
@@ -179,6 +180,11 @@ frame above 90 fps, which is sub-pixel); the spatial grid updates incrementally
 at 30 Hz; the flow field's downhill direction is cached per cell; radar, vision
 and the director query the grid instead of scanning the whole swarm; and
 sleeping machines live outside the simulation entirely until woken.
+Crawlers and skitters further than ~300 px from the squad move in packs: every
+machine in the same grid cell shares one decision (target, line of sight,
+heading), and the cells grow with distance (64 px near, 128 px mid, 256 px
+far), so the distant swarm is a few big blobs that each cost one decision.
+Close in they break off and think for themselves. F4 outlines the packs.
 `-- --stress=3000` spawns 3000 awake machines around an invulnerable squad for
 benchmarking. The flow
 field that steers the swarm is rebuilt a slice per frame so it never hitches.

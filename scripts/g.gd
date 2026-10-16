@@ -41,6 +41,7 @@ var show_profiler := false
 # display's native resolution (sharp; Retina = ~4x the pixels to light).
 var render_fast := true
 var think_budget_ms := 1.2  # swarm AI time per frame; [perf] think_budget_ms in user://settings.cfg
+var show_packs := false     # F4: outline swarm packs
 var god := false           # --stress: squad takes no damage
 var mech_style := 4          # Mech.STYLE_NAMES; F6 cycles, saved in user://settings.cfg
 const SETTINGS := "user://settings.cfg"
@@ -52,6 +53,8 @@ func load_settings() -> void:
 		mech_style = int(cf.get_value("look", "mech_style_v2", 4))
 		think_budget_ms = float(cf.get_value("perf", "think_budget_ms", think_budget_ms))
 	for a in OS.get_cmdline_user_args():
+		if a == "--show-packs":
+			show_packs = true
 		if a.begins_with("--think-budget="):
 			think_budget_ms = float(a.substr(15))
 		if a.begins_with("--mech-style="):
@@ -185,6 +188,9 @@ func _process(delta: float) -> void:
 		_perf_tick()
 	if Input.is_action_just_pressed("toggle_profiler"):
 		show_profiler = not show_profiler
+	if Input.is_action_just_pressed("toggle_packs"):
+		show_packs = not show_packs
+		announce("SWARM PACKS: " + ("SHOWN" if show_packs else "HIDDEN"), Color(1.0, 0.7, 0.4))
 	if Input.is_action_just_pressed("cycle_mech_style"):
 		mech_style = (mech_style + 1) % Mech.STYLE_NAMES.size()
 		save_settings()
@@ -330,6 +336,7 @@ func _setup_input() -> void:
 	_key("toggle_profiler", [KEY_F1])
 	_key("toggle_render", [KEY_F9])
 	_key("cycle_mech_style", [KEY_F6])
+	_key("toggle_packs", [KEY_F4])
 	_key("toggle_filter", [KEY_F2])
 
 

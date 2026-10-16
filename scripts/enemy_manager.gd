@@ -57,6 +57,33 @@ class Enemy:
 	var seen := false          # inside some squad mech's vision cone right now
 	var seen_t := -99.0
 	var bi := -1               # bucket this machine is filed in (-1 = none)
+	var pack = null            # Pack it moves with (null = thinks for itself)
+
+# Packs: crawlers and skitters away from the squad are run as groups. Every
+# machine in the same grid cell shares one decision (target, line of sight,
+# think timing); cells are bigger the further out they are, so the far swarm
+# is a few big blobs and the near swarm many small ones. Close to the squad
+# machines break off and think for themselves.
+class Pack:
+	var key := Vector3i.ZERO
+	var members: Array = []
+	var center := Vector2.ZERO
+	var radius := 0.0
+	var target: Mech
+	var los := false
+	var los_t := 0.0
+	var dist := 0.0
+	var next_think := 0.0
+	var last_think := 0.0
+	var dir := Vector2.ZERO    # shared heading for big (far) packs
+
+const PACKABLE := {"crawler": true, "skitter": true}
+const PACK_SOLO := 300.0   # closer than this to the squad: individual
+var packs := {}            # Vector3i(cell x, cell y, size) -> Pack
+var pack_list: Array = []
+var pack_cursor := 0
+var squad_c := Vector2.ZERO
+var pack_thinks := 0       # stats: pack decisions last frame
 
 const WAKE_R := 300.0
 const SEP_OX := [0, -1, 1, 0, 0, -1, 1, -1, 1]   # own bucket first
@@ -167,8 +194,12 @@ func _process_body(delta: float) -> void:
 	var t_end := tt + int(G.think_budget_ms * 1000.0)
 	var over := false
 	var cnt := 0
+	squad_c = Vector2.ZERO
+	for m in alive_mechs:
+		squad_c += m.position
+	squad_c /= alive_mechs.size()
 	for e in on_list:
-		if e.alive and now >= e.next_think:
+		if e.alive and e.pack == null and now >= e.next_think:
 			_think_now(e, now, alive_mechs)
 			cnt += 1
 			if (cnt & 7) == 0 and Time.get_ticks_usec() > t_end:
@@ -180,7 +211,11 @@ func _process_body(delta: float) -> void:
 		var e: Enemy = list[i]
 		if not e.alive:
 			continue
-		if not over and now >= e.next_think:
+		if PACKABLE.has(e.type):
+			_assign_pack(e)
+			if e.pack != null:
+				_pack_want(e, e.pack)
+		if e.pack == null and not over and now >= e.next_think:
 			_think_now(e, now, alive_mechs)
 			cnt += 1
 			if (cnt & 7) == 0 and Time.get_ticks_usec() > t_end:
@@ -189,6 +224,28 @@ func _process_body(delta: float) -> void:
 				continue
 		if not onscreen.has_point(e.pos):
 			_move(e, think_dt)
+	# Packs: one decision steers every member. Shares the same budget.
+	var pc := 0
+	var np := pack_list.size()
+	var visited := 0
+	while visited < np and not over:
+		pack_cursor = (pack_cursor + 1) % pack_list.size()
+		var pk: Pack = pack_list[pack_cursor]
+		visited += 1
+		if pk.members.is_empty():
+			_drop_pack(pk)
+			np -= 1
+			if pack_list.is_empty():
+				break
+			continue
+		if now < pk.next_think:
+			continue
+		_think_pack(pk, now, alive_mechs, onscreen)
+		pc += 1
+		cnt += 1
+		if Time.get_ticks_usec() > t_end:
+			over = true
+	pack_thinks = pc
 	thinks_frame = cnt
 	if over:
 		budget_hits += 1
@@ -244,6 +301,107 @@ func _process_body(delta: float) -> void:
 		deaths = 0
 		list = list.filter(func(x): return x.alive)
 	queue_redraw()
+
+
+func _assign_pack(e: Enemy) -> void:
+	## Called from the slice pass: file the machine in the pack for its cell,
+	## or let it go solo when it is close to the squad.
+	var dc := e.pos.distance_to(squad_c)
+	if dc < PACK_SOLO:
+		if e.pack != null:
+			_leave_pack(e)
+			e.next_think = 0.0
+		return
+	var size := 64 if dc < 600.0 else (128 if dc < 1100.0 else 256)
+	var key := Vector3i(int(e.pos.x / size), int(e.pos.y / size), size)
+	if e.pack != null and e.pack.key == key:
+		return
+	if e.pack != null:
+		_leave_pack(e)
+	var pk: Pack = packs.get(key)
+	if pk == null:
+		pk = Pack.new()
+		pk.key = key
+		pk.center = e.pos
+		pk.last_think = G.game_time
+		packs[key] = pk
+		pack_list.append(pk)
+	pk.members.append(e)
+	e.pack = pk
+
+
+func _leave_pack(e: Enemy) -> void:
+	var pk: Pack = e.pack
+	e.pack = null
+	if pk != null:
+		pk.members.erase(e)
+
+
+func _drop_pack(pk: Pack) -> void:
+	packs.erase(pk.key)
+	pack_list.erase(pk)
+
+
+func _think_pack(pk: Pack, now: float, mechs: Array, _onscreen: Rect2) -> void:
+	## One decision for the whole pack, constant cost however big it is:
+	## target, line of sight and heading are taken from the cell centre.
+	pk.last_think = now
+	var c := Vector2((pk.key.x + 0.5) * pk.key.z, (pk.key.y + 0.5) * pk.key.z)
+	pk.center = c
+	pk.radius = pk.key.z * 0.6
+	var best: Mech = null
+	var bd := INF
+	for m in mechs:
+		var dd: float = c.distance_squared_to(m.position)
+		if dd < bd:
+			bd = dd
+			best = m
+	pk.target = best
+	pk.dist = sqrt(bd)
+	if now >= pk.los_t:
+		pk.los_t = now + 0.35
+		pk.los = pk.dist < 420.0 and G.world.has_los(c, best.position)
+	var d := (best.position - c).normalized() if pk.los else G.world.flow_dir(c)
+	pk.dir = d if d != Vector2.ZERO else (best.position - c).normalized()
+	pk.next_think = now + clampf(pk.dist / THINK_FAR, THINK_MIN, THINK_MAX) * randf_range(0.9, 1.1)
+
+
+func _pack_want(e: Enemy, pk: Pack) -> void:
+	## A member applies its pack's decision (cheap; done on its slice visit).
+	e.target = pk.target
+	e.los = pk.los
+	var desired: Vector2 = pk.dir
+	if pk.key.z == 64 and pk.target != null:
+		# small packs near the fight still steer around corners individually
+		desired = (pk.target.position - e.pos).normalized() if pk.los else G.world.flow_dir(e.pos)
+		if desired == Vector2.ZERO:
+			desired = pk.dir
+	e.want = desired * (e.d.speed * e.jitter)
+
+
+func _separation(e: Enemy) -> Vector2:
+	var sep := Vector2.ZERO
+	var checked := 0
+	var bx := int(e.pos.x / BUCKET)
+	var by := int(e.pos.y / BUCKET)
+	for q in 9:
+		var gx: int = bx + SEP_OX[q]
+		var gy: int = by + SEP_OY[q]
+		if gx < 0 or gy < 0 or gx >= bw or gy >= bh:
+			continue
+		for o in grid[gy * bw + gx]:
+			if o == e:
+				continue
+			var dv: Vector2 = e.pos - o.pos
+			var md: float = e.r + o.r + 3.0
+			var l2 := dv.length_squared()
+			if l2 < md * md and l2 > 0.0001:
+				var l := sqrt(l2)
+				sep += dv / l * (md - l) / md
+			checked += 1
+			if checked > 8:
+				return sep
+	return sep
 
 
 func _move(e: Enemy, delta: float) -> void:
@@ -335,30 +493,7 @@ func _think(e: Enemy, delta: float, mechs: Array) -> void:
 			best.take_damage(e.d.melee, e.pos)
 			e.vel = to_t.normalized() * 60.0
 
-	# separation (bucket neighbours, capped)
-	var sep := Vector2.ZERO
-	var checked := 0
-	var bx := int(e.pos.x / BUCKET)
-	var by := int(e.pos.y / BUCKET)
-	for q in 9:
-		var gx: int = bx + SEP_OX[q]
-		var gy: int = by + SEP_OY[q]
-		if gx < 0 or gy < 0 or gx >= bw or gy >= bh:
-			continue
-		for o in grid[gy * bw + gx]:
-			if o == e:
-				continue
-			var dv: Vector2 = e.pos - o.pos
-			var md: float = e.r + o.r + 3.0
-			var l2 := dv.length_squared()
-			if l2 < md * md and l2 > 0.0001:
-				var l := sqrt(l2)
-				sep += dv / l * (md - l) / md
-			checked += 1
-			if checked > 8:
-				break
-		if checked > 8:
-			break
+	var sep := _separation(e)
 	if e.d.has("melee") and desired == Vector2.ZERO:
 		e.want = sep * 90.0
 	else:
@@ -562,6 +697,8 @@ func kill(e: Enemy, by: Mech) -> void:
 		_wake(e)
 	e.alive = false
 	_unfile(e)
+	if e.pack != null:
+		_leave_pack(e)
 	deaths += 1
 	G.kills += 1
 	G.leg_kills[e.type] = int(G.leg_kills.get(e.type, 0)) + 1
@@ -677,3 +814,11 @@ func _draw_body() -> void:
 				draw_polyline(pts, c2, 1.5)
 				draw_arc(e.pos, e.r + 4.0, -PI / 2, -PI / 2 + TAU * e.hp / e.max_hp, 20, Color(c2, 0.6), 1.5)
 				draw_circle(e.pos, 2.0, Color(1, 1, 1, 0.5 + 0.5 * sin(tsec * 6.0)))
+	if G.show_packs:
+		var font := ThemeDB.fallback_font
+		for pk in pack_list:
+			if pk.members.size() < 2 or not view.grow(pk.radius).has_point(pk.center):
+				continue
+			var pcol := Color(1.0, 0.75, 0.3, 0.5) if pk.key.z == 64 else (Color(1.0, 0.45, 0.3, 0.45) if pk.key.z == 128 else Color(0.9, 0.3, 0.6, 0.4))
+			draw_arc(pk.center, pk.radius + 5.0, 0, TAU, 28, pcol, 1.0)
+			draw_string(font, pk.center + Vector2(pk.radius + 6.0, -pk.radius), str(pk.members.size()), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, pcol)
