@@ -19,7 +19,7 @@ E1="$(echo "$OUT1" | grep -E "SCRIPT ERROR|^ERROR|Parse Error" )"
 echo "== 2. 2.5-minute simulated playthrough (reaches a station and departs)"
 OUT2="$(timeout 300 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 9000 -- --bot --seed=7 2>&1)"
 E2="$(echo "$OUT2" | grep -E "SCRIPT ERROR|^ERROR|Parse Error" )"
-echo "$OUT2" | grep -E "\[director\]|ARRIVED|DEPART|LEG|refit done" | head -12
+echo "$OUT2" | grep -E "\[director\]|ARRIVED|DEPART|LEG|LOST|refit done" | head -12
 
 echo "== 3. station flow: arrive, market, hangar, repairs, depart, next leg starts"
 OUT3="$(timeout 120 "$GODOT" --headless --path . --fixed-fps 60 --quit-after 600 -- --bot --seed=3 --station 2>&1)"
