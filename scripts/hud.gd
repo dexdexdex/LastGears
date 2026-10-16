@@ -78,6 +78,20 @@ func _radar_update(delta: float) -> void:
 	G.pe("radar", _t0)
 
 
+var sleep_prev := 0.0
+
+
+func _radar_scan(lst: Array, c: Vector2, rng: float, prev: float, cur: float) -> void:
+	for e in lst:
+		var v: Vector2 = e.pos - c
+		if v.length_squared() > rng * rng:
+			continue
+		var a := fposmod(v.angle(), TAU)
+		var hit := (a > prev and a <= cur) if cur >= prev else (a > prev or a <= cur)
+		if hit:
+			blips[e] = [e.pos, G.game_time, e.type == "warden"]
+
+
 func _radar_update_body(delta: float) -> void:
 	## Proximity sensor: hostile positions only refresh as the sweep passes.
 	if G.player == null or G.enemies == null:
@@ -86,14 +100,11 @@ func _radar_update_body(delta: float) -> void:
 	sweep = fposmod(sweep + TAU / RADAR_PERIOD * delta, TAU)
 	var rng: float = RADAR_RANGES[G.radar_zoom]
 	var c := G.player.position
-	for e in G.enemies.list:
-		var v: Vector2 = e.pos - c
-		if v.length_squared() > rng * rng:
-			continue
-		var a := fposmod(v.angle(), TAU)
-		var hit := (a > prev and a <= sweep) if sweep >= prev else (a > prev or a <= sweep)
-		if hit:
-			blips[e] = [e.pos, G.game_time, e.type == "warden"]
+	_radar_scan(G.enemies.list, c, rng, prev, sweep)
+	# sleepers never move: scan them every few frames over the wider wedge
+	if Engine.get_process_frames() % 6 == 0:
+		_radar_scan(G.enemies.sleepers, c, rng, sleep_prev, sweep)
+		sleep_prev = sweep
 	for e in blips.keys():
 		if not e.alive or G.game_time - blips[e][1] > RADAR_PERIOD * 1.05:
 			blips.erase(e)
@@ -431,8 +442,9 @@ func _draw_map(vs: Vector2) -> void:
 	for it in G.pickups.items:
 		if it.kind == "cache":
 			ci.draw_rect(Rect2(r.position + it.pos * k - Vector2(1.5, 1.5), Vector2(3, 3)), Color(1, 0.8, 0.35, 0.8 * a))
-	for e in G.enemies.list:
-		ci.draw_rect(Rect2(r.position + e.pos * k - Vector2(1, 1), Vector2(2, 2)), Color(e.d.color, 0.8 * a))
+	for lst in [G.enemies.list, G.enemies.sleepers]:
+		for e in lst:
+			ci.draw_rect(Rect2(r.position + e.pos * k - Vector2(1, 1), Vector2(2, 2)), Color(e.d.color, 0.8 * a))
 	for m in G.squad:
 		if m.alive:
 			ci.draw_circle(r.position + m.position * k, 3.0 if m.is_player else 2.2, Color(m.color, a))

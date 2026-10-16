@@ -59,7 +59,12 @@ class Enemy:
 
 const WAKE_R := 300.0
 
-var list: Array = []
+var list: Array = []       # awake machines: simulated every frame
+var sleepers: Array = []   # dormant field machines: never move, cost nothing until woken
+var sgrid := {}            # Vector2i bucket -> Array of sleepers (built once, sparse)
+var sleepers_dirty := false
+var _seen_sl: Array = []
+var wake_t := 0.0
 const BUCKET := 48.0
 const THINK_HZ := 20.0     # each machine re-decides ~20x/s; all of them move every frame
 var bw := 0
@@ -117,6 +122,16 @@ func _process_body(delta: float) -> void:
 	var alive_mechs := G.alive_squad()
 	if alive_mechs.is_empty():
 		return
+	wake_t -= delta
+	if wake_t <= 0.0 and not sleepers.is_empty():
+		wake_t = 0.2
+		for m in alive_mechs:
+			for o in query_sleepers(m.position, WAKE_R):
+				if not o.awake:
+					wake_around(o.pos, 140.0)
+	if sleepers_dirty:
+		sleepers_dirty = false
+		sleepers = sleepers.filter(func(x): return x.alive and not x.awake)
 	vis_t -= delta
 	if vis_t <= 0.0:
 		vis_t = 0.12
@@ -309,6 +324,8 @@ func query_radius(p: Vector2, r: float) -> Array:
 				var rr: float = r + e.r
 				if e.alive and e.pos.distance_squared_to(p) <= rr * rr:
 					out.append(e)
+	if not sgrid.is_empty():
+		out.append_array(query_sleepers(p, r))
 	return out
 
 
@@ -352,21 +369,81 @@ func _update_visibility_body(mechs: Array) -> void:
 		e.seen = seen
 		if seen:
 			e.seen_t = G.game_time
+	# sleepers: only the ones near a mech can possibly be in a cone
+	for e in _seen_sl:
+		e.seen = false
+	_seen_sl.clear()
+	for m in mechs:
+		for e in query_sleepers(m.position, Lighting.VIS_RANGE):
+			if e.seen:
+				continue
+			if Lighting.in_cone(m, e.pos) and (e.pos.distance_squared_to(m.position) < Lighting.HALO * Lighting.HALO or G.world.has_los(m.position, e.pos)):
+				e.seen = true
+				e.seen_t = G.game_time
+				_seen_sl.append(e)
 
 
 func wake_around(p: Vector2, r: float) -> void:
-	for o in query_radius(p, r):
-		o.awake = true
-	for o in list:      # dormant ones aren't always bucketed near p yet
-		if not o.awake and o.pos.distance_squared_to(p) < r * r:
-			o.awake = true
+	for o in query_sleepers(p, r):
+		_wake(o)
+
+
+func _skey(p: Vector2) -> Vector2i:
+	return Vector2i(int(p.x / BUCKET), int(p.y / BUCKET))
+
+
+func _sleep(e: Enemy) -> void:
+	e.awake = false
+	sleepers.append(e)
+	var k := _skey(e.pos)
+	if not sgrid.has(k):
+		sgrid[k] = []
+	sgrid[k].append(e)
+
+
+func _wake(e: Enemy) -> void:
+	if e.awake:
+		return
+	e.awake = true
+	var k := _skey(e.pos)
+	if sgrid.has(k):
+		sgrid[k].erase(e)
+		if sgrid[k].is_empty():
+			sgrid.erase(k)
+	sleepers_dirty = true
+	if e.alive:
+		list.append(e)
+
+
+func query_sleepers(p: Vector2, r: float) -> Array:
+	var out: Array = []
+	if sgrid.is_empty():
+		return out
+	var x0 := int((p.x - r) / BUCKET)
+	var x1 := int((p.x + r) / BUCKET)
+	var y0 := int((p.y - r) / BUCKET)
+	var y1 := int((p.y + r) / BUCKET)
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			var cell = sgrid.get(Vector2i(x, y))
+			if cell == null:
+				continue
+			for e in cell:
+				var rr: float = r + e.r
+				if e.alive and e.pos.distance_squared_to(p) <= rr * rr:
+					out.append(e)
+	return out
+
+
+func all_count() -> int:
+	return list.size() + sleepers.size()
 
 
 func seed_dormant(count: int, avoid: Vector2, rng: RandomNumberGenerator) -> void:
 	## Scatter idle clusters of slow crawlers (with a few skitters) across the zone.
 	var placed := 0
 	var tries := 0
-	while placed < count and tries < 900:
+	while placed < count and tries < 3000:
 		tries += 1
 		var c := Vector2(rng.randf() * G.world.W, rng.randf() * G.world.H) * World.CELL
 		if G.world.is_solid_at(c) or c.distance_to(avoid) < 900.0:
@@ -375,7 +452,8 @@ func seed_dormant(count: int, avoid: Vector2, rng: RandomNumberGenerator) -> voi
 		for i in n:
 			var p := G.world.nearest_free(c + Vector2(rng.randf_range(-60, 60), rng.randf_range(-60, 60)))
 			var en := spawn("crawler" if rng.randf() < 0.85 else "skitter", p)
-			en.awake = false
+			list.pop_back()
+			_sleep(en)
 			placed += 1
 
 
@@ -401,6 +479,8 @@ func damage_radius(p: Vector2, r: float, dmg: float) -> void:
 func kill(e: Enemy, by: Mech) -> void:
 	if not e.alive:
 		return
+	if not e.awake:
+		_wake(e)
 	e.alive = false
 	deaths += 1
 	G.kills += 1
@@ -433,7 +513,7 @@ func count_awake() -> int:
 
 
 func alive_count() -> int:
-	return list.size()
+	return list.size() + sleepers.size()
 
 
 func _draw() -> void:
@@ -486,6 +566,16 @@ func _draw_body() -> void:
 				if e.type == "warden":
 					continue
 		draw_texture_rect(dot, Rect2(e.pos - Vector2(r, r), Vector2(r, r) * 2.0), false, c)
+	# sleepers in view (dim, still)
+	if not sgrid.is_empty():
+		for y in range(int(view.position.y / BUCKET), int(view.end.y / BUCKET) + 1):
+			for x in range(int(view.position.x / BUCKET), int(view.end.x / BUCKET) + 1):
+				var cell = sgrid.get(Vector2i(x, y))
+				if cell == null:
+					continue
+				for e in cell:
+					var rs: float = e.r
+					draw_texture_rect(dot, Rect2(e.pos - Vector2(rs, rs), Vector2(rs, rs) * 2.0), false, Color(e.d.color).darkened(0.35))
 	# pass 2: the few machines with extra detail
 	for e in specials:
 		var c2: Color = e.d.color

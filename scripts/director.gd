@@ -33,7 +33,7 @@ func populate_zone() -> void:
 	## Dormant crawler fields scattered across the zone at the start of a leg.
 	var r := RandomNumberGenerator.new()
 	r.seed = G.world.rng.seed + 5
-	G.enemies.seed_dormant(int(G.world.W * G.world.H / 95.0) + G.threat * 60, G.world.start_c, r)
+	G.enemies.seed_dormant(3 * (int(G.world.W * G.world.H / 95.0) + G.threat * 60), G.world.start_c, r)
 
 
 func report_damage(amount: float, _m: Mech) -> void:
@@ -119,7 +119,7 @@ func _enter(p: int) -> void:
 
 
 func _spawn_pack(n: int, prog: float, horde: bool) -> void:
-	if G.enemies.alive_count() >= max_enemies:
+	if G.enemies.count_awake() >= max_enemies:   # dormant fields don't block packs
 		return
 	var center := G.squad_centroid()
 	var angle: float = horde_dirs[rng.randi() % horde_dirs.size()] if horde else rng.randf() * TAU
