@@ -180,7 +180,7 @@ frame above 90 fps, which is sub-pixel); the spatial grid updates incrementally
 at 30 Hz; the flow field's downhill direction is cached per cell; radar, vision
 and the director query the grid instead of scanning the whole swarm; and
 sleeping machines live outside the simulation entirely until woken.
-Crawlers and skitters further than ~300 px from the squad move in packs: every
+Crawlers (the bulk of the swarm) further than ~300 px from the squad move in packs (skitters, spitters, ticks and wardens always think for themselves): every
 machine in the same grid cell shares one decision (target, line of sight,
 heading), and the cells grow with distance (64 px near, 128 px mid, 256 px
 far), so the distant swarm is a few big blobs that each cost one decision.

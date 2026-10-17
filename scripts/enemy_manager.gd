@@ -60,7 +60,7 @@ class Enemy:
 	var pack = null            # Pack it moves with (null = thinks for itself)
 	var base := Vector2.ZERO   # pack drift when this machine last had a real position
 
-# Packs: crawlers and skitters away from the squad are run as groups. Every
+# Packs: crawlers (the bulk of the swarm) away from the squad are run as groups. Every
 # machine in the same grid cell shares one decision (target, line of sight,
 # think timing); cells are bigger the further out they are, so the far swarm
 # is a few big blobs and the near swarm many small ones. Close to the squad
@@ -84,7 +84,7 @@ class Pack:
 	var drift := Vector2.ZERO
 	var speed := 36.0
 
-const PACKABLE := {"crawler": true, "skitter": true}
+const PACKABLE := {"crawler": true}   # only the bulk; every other type thinks for itself
 const PACK_SOLO := 300.0   # closer than this to the squad: individual
 var packs := {}            # Vector3i(cell x, cell y, size) -> Pack
 var pack_list: Array = []
