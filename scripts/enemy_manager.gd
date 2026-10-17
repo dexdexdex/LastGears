@@ -741,13 +741,17 @@ func seed_dormant(count: int, avoid: Vector2, rng: RandomNumberGenerator) -> voi
 		var c := Vector2(rng.randf() * G.world.W, rng.randf() * G.world.H) * World.CELL
 		if G.world.is_solid_at(c) or c.distance_to(avoid) < 900.0:
 			continue
-		var n := rng.randi_range(8, 22)
-		for i in n:
-			var p := G.world.nearest_free(c + Vector2(rng.randf_range(-60, 60), rng.randf_range(-60, 60)))
-			var en := spawn("crawler" if rng.randf() < 0.85 else "skitter", p)
-			list.pop_back()
-			_sleep(en)
-			placed += 1
+		placed += seed_cluster(c, rng.randi_range(8, 22), rng)
+
+
+func seed_cluster(c: Vector2, n: int, rng: RandomNumberGenerator) -> int:
+	## One idle cluster of crawlers (a few skitters) around c, asleep.
+	for i in n:
+		var p := G.world.nearest_free(c + Vector2(rng.randf_range(-60, 60), rng.randf_range(-60, 60)))
+		var en := spawn("crawler" if rng.randf() < 0.85 else "skitter", p)
+		list.pop_back()
+		_sleep(en)
+	return n
 
 
 func damage(e: Enemy, amount: float, by: Mech) -> void:

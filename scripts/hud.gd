@@ -82,11 +82,12 @@ var sleep_prev := 0.0
 var awake_prev := 0.0
 
 
-func _radar_scan(lst: Array, c: Vector2, rng: float, prev: float, cur: float) -> void:
+func _radar_scan(lst: Array, c: Vector2, rng: float, prev: float, cur: float, still := false) -> void:
+	var r2 := rng * rng
 	for e in lst:
-		var ep: Vector2 = G.enemies.pos_of(e)
+		var ep: Vector2 = e.pos if still or e.pack == null or not e.pack.virtual else G.enemies.pos_of(e)
 		var v: Vector2 = ep - c
-		if v.length_squared() > rng * rng:
+		if v.length_squared() > r2:
 			continue
 		var a := fposmod(v.angle(), TAU)
 		var hit := (a > prev and a <= cur) if cur >= prev else (a > prev or a <= cur)
@@ -108,7 +109,10 @@ func _radar_update_body(delta: float) -> void:
 		_radar_scan(G.enemies.list, c, rng, awake_prev, sweep)
 		awake_prev = sweep
 	if fr % 6 == 0:
-		_radar_scan(G.enemies.sleepers, c, rng, sleep_prev, sweep)
+		# sleepers never move: at short ranges ask the grid for the nearby ones
+		# instead of walking the whole zone's worth
+		var sl: Array = G.enemies.query_sleepers(c, rng) if rng <= 1400.0 else G.enemies.sleepers
+		_radar_scan(sl, c, rng, sleep_prev, sweep, true)
 		sleep_prev = sweep
 	if fr % 15 == 7:
 		for e in blips.keys():

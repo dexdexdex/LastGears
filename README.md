@@ -125,7 +125,9 @@ frames and role modules stay fixed.
   with Wardens) → back to RELAX once the area is actually clear. Intensity rises
   with damage taken and nearby enemies; difficulty scales with how far east you
   are. The top-right readout (F3) shows what it's doing, for tuning.
-- **Enemies are dots, and there are a lot of them.** Around two thousand per zone: dormant
+- **Enemies are dots, and there are a lot of them.** Up to six thousand per zone: ~3000
+  asleep at the start, and the director keeps dropping more sleeping clusters out of
+  sight ahead of you (~30/s) until the zone holds 6000. Dormant
   crawler fields scattered through the city (asleep they cost nothing: they sit in a
   static grid outside the simulation) (they wake when you get close or
   shoot them), plus much bigger director packs and hordes. All weapons hit ~2.2×

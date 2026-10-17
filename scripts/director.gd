@@ -20,7 +20,15 @@ var horde_spawned := 0
 var horde_tick := 0.0
 var horde_dirs: Array = []
 var hordes := 0
-var max_enemies := 1600
+var max_enemies := 1600         # awake cap for director packs
+# Zone population: ZONE_START asleep at the start, then a sleeping cluster
+# every SEED_EVERY s (out of sight, ahead) until the zone holds ZONE_TARGET.
+const ZONE_START := 3000
+const ZONE_TARGET := 6000
+const SEED_EVERY := 0.5          # ~15 clusters x 15 = ~30 machines/s
+const SEED_MIN_DIST := 1100.0
+var seed_t := 0.0
+var seeded := 0
 var rng := RandomNumberGenerator.new()
 var log_lines: Array = []       # debug history
 
@@ -33,7 +41,37 @@ func populate_zone() -> void:
 	## Dormant crawler fields scattered across the zone at the start of a leg.
 	var r := RandomNumberGenerator.new()
 	r.seed = G.world.rng.seed + 5
-	G.enemies.seed_dormant(3 * (int(G.world.W * G.world.H / 95.0) + G.threat * 60), G.world.start_c, r)
+	var t0 := Time.get_ticks_usec()
+	G.enemies.seed_dormant(mini(ZONE_START, int(4.5 * (G.world.W * G.world.H / 95.0 + G.threat * 60))), G.world.start_c, r)
+	print("[director] seeded %d dormant in %.1f ms" % [G.enemies.alive_count(), (Time.get_ticks_usec() - t0) / 1000.0])
+
+
+func _reinforce(delta: float) -> void:
+	## Keep the zone filling up toward ZONE_TARGET: a sleeping cluster at a time,
+	## dropped out of sight, well away from the squad, mostly ahead on the route.
+	seed_t -= delta
+	if seed_t > 0.0 or G.enemies.alive_count() >= ZONE_TARGET:
+		return
+	seed_t = SEED_EVERY
+	var w: World = G.world
+	var view := G.camera.view_rect().grow(250.0) if G.camera else Rect2()
+	var here := w.progress_of(G.squad_centroid())
+	var sz := w.size_px()
+	for i in 12:
+		var c := Vector2(rng.randf_range(60.0, sz.x - 60.0), rng.randf_range(60.0, sz.y - 60.0))
+		if w.is_solid_at(c) or view.has_point(c) or w.start_zone.grow(150).has_point(c) or w.goal_zone.grow(150).has_point(c):
+			continue
+		if w.progress_of(c) < here - 0.08 and rng.randf() < 0.8:
+			continue          # mostly ahead of the squad, the odd one behind
+		var ok := true
+		for m in G.alive_squad():
+			if m.position.distance_to(c) < SEED_MIN_DIST:
+				ok = false
+				break
+		if not ok:
+			continue
+		seeded += G.enemies.seed_cluster(c, rng.randi_range(8, 22), rng)
+		return
 
 
 func report_damage(amount: float, _m: Mech) -> void:
@@ -58,6 +96,7 @@ func _process_body(delta: float) -> void:
 	if G.game_state != "play" or G.alive_squad().is_empty():
 		return
 	t += delta
+	_reinforce(delta)
 	var near := near_count()
 	# Intensity decays fast when nothing's around, slowly in a fight.
 	intensity -= (9.0 if near < 3 else 1.5) * delta
